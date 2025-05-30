@@ -24,9 +24,6 @@
 # Go workspace file
 go.work
 
-# Generated files
-*_easyjson.go
-
 # Log files
 *.log
 

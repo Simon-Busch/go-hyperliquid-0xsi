@@ -25,15 +25,20 @@ type SpotAssetInfo struct {
 	IsCanonical bool   `json:"isCanonical"`
 }
 
+type EvmContract struct {
+	Address             string `json:"address"`
+	EvmExtraWeiDecimals int    `json:"evm_extra_wei_decimals"`
+}
+
 type SpotTokenInfo struct {
-	Name        string  `json:"name"`
-	SzDecimals  int     `json:"szDecimals"`
-	WeiDecimals int     `json:"weiDecimals"`
-	Index       int     `json:"index"`
-	TokenID     string  `json:"tokenId"`
-	IsCanonical bool    `json:"isCanonical"`
-	EvmContract *string `json:"evmContract"`
-	FullName    *string `json:"fullName"`
+	Name        string       `json:"name"`
+	SzDecimals  int          `json:"szDecimals"`
+	WeiDecimals int          `json:"weiDecimals"`
+	Index       int          `json:"index"`
+	TokenID     string       `json:"tokenId"`
+	IsCanonical bool         `json:"isCanonical"`
+	EvmContract *EvmContract `json:"evmContract"`
+	FullName    *string      `json:"fullName"`
 }
 
 type SpotMeta struct {
