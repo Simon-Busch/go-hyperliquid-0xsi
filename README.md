@@ -1,5 +1,12 @@
 # go-hyperliquid
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/sonirico/go-hyperliquid.svg)](https://pkg.go.dev/github.com/sonirico/go-hyperliquid)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sonirico/go-hyperliquid)](https://goreportcard.com/report/github.com/sonirico/go-hyperliquid)
+[![CI](https://github.com/sonirico/go-hyperliquid/actions/workflows/ci.yml/badge.svg)](https://github.com/sonirico/go-hyperliquid/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/sonirico/go-hyperliquid/badge.svg?branch=main)](https://coveralls.io/github/sonirico/go-hyperliquid?branch=main)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/sonirico/go-hyperliquid)](https://go.dev/)
+
 Unofficial Go client for the Hyperliquid exchange API. This implementation follows the same philosophy and patterns as the official Python SDK.
 
 ## Installation
@@ -87,7 +94,49 @@ func main() {
 
 ## Documentation
 
-For detailed API documentation, please refer to the [official Hyperliquid docs](https://hyperliquid.xyz/docs).
+For detailed API documentation, please refer to:
+- [Official Hyperliquid API docs](https://hyperliquid.xyz/docs)
+- [Go package documentation](https://pkg.go.dev/github.com/sonirico/go-hyperliquid)
+
+### Examples
+
+Check the `examples/` directory for more usage examples:
+- WebSocket subscriptions
+- Order management
+- Position handling
+- Market data retrieval
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Quick Start for Contributors
+
+```bash
+# Clone the repository
+git clone https://github.com/sonirico/go-hyperliquid.git
+cd go-hyperliquid
+
+# Install dependencies and tools
+make deps install-tools
+
+# Run all checks
+make ci-full
+
+# Run tests (excluding examples)
+make ci-test
+```
+
+## Roadmap
+
+- [x] Complete WebSocket API implementation
+- [x] REST API client
+- [x] Order management
+- [x] User account operations
+- [ ] Advanced order types
+- [ ] Historical data API
+- [ ] Rate limiting improvements
+- [ ] Connection pooling
 
 ## License
 

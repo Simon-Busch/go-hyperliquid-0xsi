@@ -57,9 +57,9 @@ lint: ## Run golangci-lint
 	golangci-lint run
 
 fmt: ## Format code
-	$(GOCMD) fmt ./...
-	goimports -w .
-	golines -w .
+	@find . -name "*.go" -not -name "*_easyjson.go" -not -path "./examples/*" | xargs gofmt -s -w
+	@find . -name "*.go" -not -name "*_easyjson.go" -not -path "./examples/*" | xargs goimports -w
+	@find . -name "*.go" -not -name "*_easyjson.go" -not -path "./examples/*" | xargs golines -w
 
 vet: ## Run go vet
 	$(GOCMD) vet ./...
@@ -99,3 +99,30 @@ git-hooks: ## Install git hooks
 	@echo "Pre-commit hook installed"
 
 ci: deps generate check test coverage ## Run all CI checks
+
+ci-test: ## Run tests excluding examples (for CI)
+	$(GOTEST) -v -race -coverprofile=coverage.out $(shell go list ./... | grep -v examples)
+
+ci-lint: ## Run golangci-lint excluding examples (for CI)
+	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Install it with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
+	golangci-lint run --exclude-dirs=examples
+
+ci-fmt-check: ## Check if code is formatted (for CI)
+	@UNFORMATTED=$$(find . -name "*.go" -not -name "*_easyjson.go" -not -path "./examples/*" | xargs gofmt -s -l); \
+	if [ -n "$$UNFORMATTED" ]; then \
+		echo "The following files are not formatted:"; \
+		echo "$$UNFORMATTED"; \
+		exit 1; \
+	fi
+
+ci-generate-check: ## Check if generated files are up to date (for CI)
+	$(GOGENERATE) ./...
+	@CHANGES=$$(git status --porcelain | grep "_easyjson.go$$" || true); \
+	if [ -n "$$CHANGES" ]; then \
+		echo "Generated easyjson files are not up to date. Please run 'make generate' and commit the changes."; \
+		echo "Files with changes:"; \
+		echo "$$CHANGES"; \
+		exit 1; \
+	fi
+
+ci-full: deps ci-generate-check ci-fmt-check vet ci-lint ci-test ## Run complete CI pipeline

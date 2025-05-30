@@ -55,7 +55,7 @@ type SpotAssetCtx struct {
 	Coin              string  `json:"coin"`
 }
 
-// WebSocket message types
+// WsMsg represents a WebSocket message with a channel and data payload.
 type WsMsg struct {
 	Channel string         `json:"channel"`
 	Data    map[string]any `json:"data"`

@@ -16,9 +16,9 @@ func SignL1Action(
 	timestamp int64,
 	isMainnet bool,
 ) (string, error) {
-	chainId := "0x1"
+	chainID := "0x1"
 	if !isMainnet {
-		chainId = "0x66eee"
+		chainID = "0x66eee"
 	}
 
 	actionJSON, err := json.Marshal(action)
@@ -28,7 +28,7 @@ func SignL1Action(
 
 	msg := map[string]any{
 		"action":       string(actionJSON),
-		"chainId":      chainId,
+		"chainId":      chainID,
 		"nonce":        timestamp,
 		"vaultAddress": vaultAddress,
 	}
@@ -38,7 +38,7 @@ func SignL1Action(
 		return "", fmt.Errorf("failed to marshal message: %w", err)
 	}
 
-	hash := crypto.Keccak256Hash([]byte(msgJSON))
+	hash := crypto.Keccak256Hash(msgJSON)
 	signature, err := crypto.Sign(hash.Bytes(), privateKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign message: %w", err)

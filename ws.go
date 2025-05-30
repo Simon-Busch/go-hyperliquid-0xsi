@@ -13,6 +13,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	// pingInterval is the interval for sending ping messages to keep WebSocket alive
+	pingInterval = 50 * time.Second
+	// gracefulCloseTimeout is the timeout for graceful WebSocket close
+	gracefulCloseTimeout = 10 * time.Second
+)
+
 type WebsocketClient struct {
 	url           string
 	conn          *websocket.Conn
@@ -54,6 +61,7 @@ func (w *WebsocketClient) Connect(ctx context.Context) error {
 
 	dialer := websocket.Dialer{}
 
+	//nolint:bodyclose // WebSocket connections don't have response bodies to close
 	conn, _, err := dialer.DialContext(ctx, w.url, nil)
 	if err != nil {
 		return fmt.Errorf("websocket dial: %w", err)
@@ -139,7 +147,7 @@ func (w *WebsocketClient) readPump(ctx context.Context) {
 	defer func() {
 		w.mu.Lock()
 		if w.conn != nil {
-			w.conn.Close()
+			_ = w.conn.Close() // Ignore close error in defer
 			w.conn = nil
 		}
 		w.mu.Unlock()
@@ -177,7 +185,7 @@ func (w *WebsocketClient) readPump(ctx context.Context) {
 }
 
 func (w *WebsocketClient) pingPump(ctx context.Context) {
-	ticker := time.NewTicker(50 * time.Second)
+	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 
 	for {
@@ -215,7 +223,7 @@ func (w *WebsocketClient) reconnect() {
 		case <-w.done:
 			return
 		default:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), gracefulCloseTimeout)
 			err := w.Connect(ctx)
 			cancel()
 			if err == nil {
@@ -278,40 +286,12 @@ func (w *WebsocketClient) writeJSON(v any) error {
 
 func (w *WebsocketClient) SubscribeToTrades(coin string, callback func(WSMessage)) (int, error) {
 	sub := Subscription{Type: "trades", Coin: coin}
-	return w.subscribe(sub, callback)
+	return w.Subscribe(sub, callback)
 }
 
 func (w *WebsocketClient) SubscribeToOrderbook(coin string, callback func(WSMessage)) (int, error) {
 	sub := Subscription{Type: "l2Book", Coin: coin}
-	return w.subscribe(sub, callback)
-}
-
-func (w *WebsocketClient) subscribe(sub Subscription, callback func(WSMessage)) (int, error) {
-	if callback == nil {
-		return 0, fmt.Errorf("callback cannot be nil")
-	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	key := sub.key()
-	id := int(w.nextSubID.Add(1))
-
-	if w.subscriptions[key] == nil {
-		w.subscriptions[key] = make(map[int]*subscriptionCallback)
-	}
-
-	w.subscriptions[key][id] = &subscriptionCallback{
-		id:       id,
-		callback: callback,
-	}
-
-	if err := w.sendSubscribe(sub); err != nil {
-		delete(w.subscriptions[key], id)
-		return 0, fmt.Errorf("subscribe: %w", err)
-	}
-
-	return id, nil
+	return w.Subscribe(sub, callback)
 }
 
 func matchSubscription(key subKey, msg WSMessage) bool {

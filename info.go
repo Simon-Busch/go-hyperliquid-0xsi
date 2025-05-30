@@ -5,11 +5,44 @@ import (
 	"fmt"
 )
 
+const (
+	// spotAssetIndexOffset is the offset added to spot asset indices
+	spotAssetIndexOffset = 10000
+)
+
 type Info struct {
 	client         *Client
 	coinToAsset    map[string]int
 	nameToCoin     map[string]string
 	assetToDecimal map[int]int
+}
+
+// postTimeRangeRequest makes a POST request with time range parameters
+func (i *Info) postTimeRangeRequest(
+	requestType, user string,
+	startTime int64,
+	endTime *int64,
+	extraParams map[string]any,
+) ([]byte, error) {
+	payload := map[string]any{
+		"type":      requestType,
+		"startTime": startTime,
+	}
+	if user != "" {
+		payload["user"] = user
+	}
+	if endTime != nil {
+		payload["endTime"] = *endTime
+	}
+	for k, v := range extraParams {
+		payload[k] = v
+	}
+
+	resp, err := i.client.post("/info", payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch %s: %w", requestType, err)
+	}
+	return resp, nil
 }
 
 func NewInfo(baseURL string, skipWS bool, meta *Meta, spotMeta *SpotMeta) *Info {
@@ -45,7 +78,7 @@ func NewInfo(baseURL string, skipWS bool, meta *Meta, spotMeta *SpotMeta) *Info 
 
 	// Map spot assets starting at 10000
 	for _, spotInfo := range spotMeta.Universe {
-		asset := spotInfo.Index + 10000
+		asset := spotInfo.Index + spotAssetIndexOffset
 		info.coinToAsset[spotInfo.Name] = asset
 		info.nameToCoin[spotInfo.Name] = spotInfo.Name
 		info.assetToDecimal[asset] = spotMeta.Tokens[spotInfo.Tokens[0]].SzDecimals
@@ -187,18 +220,9 @@ func (i *Info) UserFills(address string) ([]Fill, error) {
 }
 
 func (i *Info) UserFillsByTime(address string, startTime int64, endTime *int64) ([]Fill, error) {
-	payload := map[string]any{
-		"type":      "userFillsByTime",
-		"user":      address,
-		"startTime": startTime,
-	}
-	if endTime != nil {
-		payload["endTime"] = *endTime
-	}
-
-	resp, err := i.client.post("/info", payload)
+	resp, err := i.postTimeRangeRequest("userFillsByTime", address, startTime, endTime, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch user fills by time: %w", err)
+		return nil, err
 	}
 
 	var result []Fill
@@ -244,18 +268,15 @@ func (i *Info) FundingHistory(
 	endTime *int64,
 ) ([]FundingHistory, error) {
 	coin := i.nameToCoin[name]
-	payload := map[string]any{
-		"type":      "fundingHistory",
-		"coin":      coin,
-		"startTime": startTime,
-	}
-	if endTime != nil {
-		payload["endTime"] = *endTime
-	}
-
-	resp, err := i.client.post("/info", payload)
+	resp, err := i.postTimeRangeRequest(
+		"fundingHistory",
+		"",
+		startTime,
+		endTime,
+		map[string]any{"coin": coin},
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch funding history: %w", err)
+		return nil, err
 	}
 
 	var result []FundingHistory
@@ -270,18 +291,9 @@ func (i *Info) UserFundingHistory(
 	startTime int64,
 	endTime *int64,
 ) ([]UserFundingHistory, error) {
-	payload := map[string]any{
-		"type":      "userFunding",
-		"user":      user,
-		"startTime": startTime,
-	}
-	if endTime != nil {
-		payload["endTime"] = *endTime
-	}
-
-	resp, err := i.client.post("/info", payload)
+	resp, err := i.postTimeRangeRequest("userFunding", user, startTime, endTime, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch user funding history: %w", err)
+		return nil, err
 	}
 
 	var result []UserFundingHistory
@@ -411,7 +423,7 @@ func (i *Info) QueryOrderByOid(user string, oid int64) (*OpenOrder, error) {
 	return &result, nil
 }
 
-func (i *Info) QueryOrderByCloid(user string, cloid string) (*OpenOrder, error) {
+func (i *Info) QueryOrderByCloid(user, cloid string) (*OpenOrder, error) {
 	resp, err := i.client.post("/info", map[string]any{
 		"type": "orderStatus",
 		"user": user,

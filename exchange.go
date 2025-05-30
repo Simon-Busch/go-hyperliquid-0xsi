@@ -14,6 +14,33 @@ type Exchange struct {
 	info        *Info
 }
 
+// executeAction executes an action and unmarshals the response into the given result
+func (e *Exchange) executeAction(action map[string]any, result any) error {
+	timestamp := time.Now().UnixMilli()
+
+	sig, err := SignL1Action(
+		e.privateKey,
+		action,
+		e.vault,
+		timestamp,
+		e.client.baseURL == MainnetAPIURL,
+	)
+	if err != nil {
+		return err
+	}
+
+	resp, err := e.postAction(action, sig, timestamp)
+	if err != nil {
+		return err
+	}
+
+	if err := json.Unmarshal(resp, result); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func NewExchange(
 	privateKey *ecdsa.PrivateKey,
 	baseURL string,
@@ -85,68 +112,30 @@ func (e *Exchange) BulkOrders(orders []OrderRequest, builder *BuilderInfo) ([]Op
 }
 
 func (e *Exchange) Cancel(coin string, oid int64) (*OpenOrder, error) {
-	timestamp := time.Now().UnixMilli()
-
 	action := map[string]any{
 		"type": "cancel",
 		"coin": coin,
 		"oid":  oid,
 	}
 
-	sig, err := SignL1Action(
-		e.privateKey,
-		action,
-		e.vault,
-		timestamp,
-		e.client.baseURL == MainnetAPIURL,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := e.postAction(action, sig, timestamp)
-	if err != nil {
-		return nil, err
-	}
-
 	var result OpenOrder
-	if err := json.Unmarshal(resp, &result); err != nil {
+	if err := e.executeAction(action, &result); err != nil {
 		return nil, err
 	}
-
 	return &result, nil
 }
 
-func (e *Exchange) CancelByCloid(coin string, cloid string) (*OpenOrder, error) {
-	timestamp := time.Now().UnixMilli()
-
+func (e *Exchange) CancelByCloid(coin, cloid string) (*OpenOrder, error) {
 	action := map[string]any{
 		"type":  "cancelByCloid",
 		"coin":  coin,
 		"cloid": cloid,
 	}
 
-	sig, err := SignL1Action(
-		e.privateKey,
-		action,
-		e.vault,
-		timestamp,
-		e.client.baseURL == MainnetAPIURL,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := e.postAction(action, sig, timestamp)
-	if err != nil {
-		return nil, err
-	}
-
 	var result OpenOrder
-	if err := json.Unmarshal(resp, &result); err != nil {
+	if err := e.executeAction(action, &result); err != nil {
 		return nil, err
 	}
-
 	return &result, nil
 }
 
@@ -183,8 +172,6 @@ func (e *Exchange) CancelAll(coin string) ([]OpenOrder, error) {
 }
 
 func (e *Exchange) UpdateLeverage(coin string, leverage int) (*UserState, error) {
-	timestamp := time.Now().UnixMilli()
-
 	action := map[string]any{
 		"type": "updateLeverage",
 		"coin": coin,
@@ -194,60 +181,24 @@ func (e *Exchange) UpdateLeverage(coin string, leverage int) (*UserState, error)
 		},
 	}
 
-	sig, err := SignL1Action(
-		e.privateKey,
-		action,
-		e.vault,
-		timestamp,
-		e.client.baseURL == MainnetAPIURL,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := e.postAction(action, sig, timestamp)
-	if err != nil {
-		return nil, err
-	}
-
 	var result UserState
-	if err := json.Unmarshal(resp, &result); err != nil {
+	if err := e.executeAction(action, &result); err != nil {
 		return nil, err
 	}
-
 	return &result, nil
 }
 
 func (e *Exchange) UpdateIsolatedMargin(coin string, margin float64) (*UserState, error) {
-	timestamp := time.Now().UnixMilli()
-
 	action := map[string]any{
 		"type":        "updateIsolatedMargin",
 		"coin":        coin,
 		"marginDelta": margin,
 	}
 
-	sig, err := SignL1Action(
-		e.privateKey,
-		action,
-		e.vault,
-		timestamp,
-		e.client.baseURL == MainnetAPIURL,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := e.postAction(action, sig, timestamp)
-	if err != nil {
-		return nil, err
-	}
-
 	var result UserState
-	if err := json.Unmarshal(resp, &result); err != nil {
+	if err := e.executeAction(action, &result); err != nil {
 		return nil, err
 	}
-
 	return &result, nil
 }
 
@@ -325,41 +276,22 @@ func (e *Exchange) WithdrawUsdc(amount float64, destination string) (*UserState,
 }
 
 func (e *Exchange) Transfer(amount float64, destination string) (*UserState, error) {
-	timestamp := time.Now().UnixMilli()
-
 	action := map[string]any{
 		"type":        "transfer",
 		"destination": destination,
 		"amount":      amount,
 	}
 
-	sig, err := SignL1Action(
-		e.privateKey,
-		action,
-		e.vault,
-		timestamp,
-		e.client.baseURL == MainnetAPIURL,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := e.postAction(action, sig, timestamp)
-	if err != nil {
-		return nil, err
-	}
-
 	var result UserState
-	if err := json.Unmarshal(resp, &result); err != nil {
+	if err := e.executeAction(action, &result); err != nil {
 		return nil, err
 	}
-
 	return &result, nil
 }
 
 // ... Additional methods for other operations like cancels, transfers etc.
 
-func (e *Exchange) postAction(action any, signature any, nonce int64) ([]byte, error) {
+func (e *Exchange) postAction(action, signature any, nonce int64) ([]byte, error) {
 	payload := map[string]any{
 		"action":    action,
 		"nonce":     nonce,

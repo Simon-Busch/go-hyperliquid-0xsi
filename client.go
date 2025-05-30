@@ -1,7 +1,11 @@
+// Package hyperliquid provides a Go client library for the Hyperliquid exchange API.
+// It includes support for both REST API and WebSocket connections, allowing users to
+// access market data, manage orders, and handle user account operations.
 package hyperliquid
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +16,9 @@ const (
 	MainnetAPIURL = "https://api.hyperliquid.xyz"
 	TestnetAPIURL = "https://api.hyperliquid-testnet.xyz"
 	LocalAPIURL   = "http://localhost:3001"
+
+	// httpErrorStatusCode is the minimum status code considered an error
+	httpErrorStatusCode = 400
 )
 
 type Client struct {
@@ -37,7 +44,12 @@ func (c *Client) post(path string, payload any) ([]byte, error) {
 	}
 
 	url := c.baseURL + path
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(
+		context.Background(),
+		"POST",
+		url,
+		bytes.NewBuffer(jsonData),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -58,7 +70,7 @@ func (c *Client) post(path string, payload any) ([]byte, error) {
 		}
 	}
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode >= httpErrorStatusCode {
 		var apiErr APIError
 		if err := json.Unmarshal(body, &apiErr); err != nil {
 			return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
