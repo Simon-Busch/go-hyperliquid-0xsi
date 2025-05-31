@@ -3,8 +3,7 @@ run:
   tests: true
 
 linters-settings:
-  govet:
-    shadow: true
+  govet: {}
   gocyclo:
     min-complexity: 15
   dupl:

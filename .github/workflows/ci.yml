@@ -36,25 +36,37 @@ jobs:
     - name: Download dependencies
       run: go mod download
 
+    - name: Install tools
+      run: go install github.com/mailru/easyjson/...@latest
+
     - name: Verify dependencies
       run: go mod verify
 
     - name: Run go vet
       run: go vet ./...
 
-    - name: Run go fmt
+    - name: Check formatting
       run: |
-        if [ "$(gofmt -s -l . | grep -v examples | wc -l)" -gt 0 ]; then
+        UNFORMATTED=$(find . -name "*.go" -not -name "*_easyjson.go" -not -path "./examples/*" | xargs gofmt -s -l)
+        if [ -n "$UNFORMATTED" ]; then
           echo "The following files are not formatted:"
-          gofmt -s -l . | grep -v examples
+          echo "$UNFORMATTED"
+          exit 1
+        fi
+
+    - name: Check generated files
+      run: |
+        go generate ./...
+        CHANGES=$(git status --porcelain | grep "_easyjson.go$" || true)
+        if [ -n "$CHANGES" ]; then
+          echo "Generated easyjson files are not up to date. Please run 'go generate ./...' and commit the changes."
+          echo "Files with changes:"
+          echo "$CHANGES"
           exit 1
         fi
 
     - name: Run tests (excluding examples)
       run: go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v examples)
-
-    - name: Generate coverage report
-      run: go tool cover -html=coverage.out -o coverage.html
 
     - name: Upload coverage to Coveralls
       if: matrix.go-version == '1.23'
@@ -76,10 +88,11 @@ jobs:
         go-version: '1.23'
 
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v8
+      uses: golangci/golangci-lint-action@v6
       with:
         version: latest
-        args: --exclude-dirs=examples
+        skip-pkg-cache: true
+        skip-build-cache: true
 
   security:
     name: Security Scan
@@ -94,37 +107,4 @@ jobs:
         go-version: '1.23'
 
     - name: Run Gosec Security Scanner
-      uses: securecodewarrior/github-action-gosec@master
-      with:
-        args: '-exclude-dir=examples ./...'
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.23'
-
-    - name: Build
-      run: go build -v ./...
-
-    - name: Check for easyjson generation
-      run: |
-        if ! go list -m github.com/mailru/easyjson > /dev/null 2>&1; then
-          echo "easyjson not found in dependencies"
-          exit 1
-        fi
-        echo "Checking if easyjson files are up to date..."
-        go generate ./...
-        CHANGES=$(git status --porcelain | grep "_easyjson.go$" || true)
-        if [ -n "$CHANGES" ]; then
-          echo "Generated easyjson files are not up to date. Please run 'go generate ./...' and commit the changes."
-          echo "Files with changes:"
-          echo "$CHANGES"
-          exit 1
-        fi
+      run: go install github.com/securego/gosec/v2/cmd/gosec@latest && gosec -exclude-dir=examples ./...
