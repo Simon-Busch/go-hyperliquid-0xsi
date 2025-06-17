@@ -294,6 +294,81 @@ func (w *WebsocketClient) SubscribeToOrderbook(coin string, callback func(WSMess
 	return w.Subscribe(sub, callback)
 }
 
+// SubscribeToAllMids subscribes to all mid prices
+func (w *WebsocketClient) SubscribeToAllMids(callback func(WSMessage)) (int, error) {
+	sub := Subscription{Type: "allMids"}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToUserEvents subscribes to user events
+func (w *WebsocketClient) SubscribeToUserEvents(
+	user string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "userEvents", User: user}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToUserFills subscribes to user fills
+func (w *WebsocketClient) SubscribeToUserFills(user string, callback func(WSMessage)) (int, error) {
+	sub := Subscription{Type: "userFills", User: user}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToCandles subscribes to candle data
+func (w *WebsocketClient) SubscribeToCandles(
+	coin, interval string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "candle", Coin: coin, Interval: interval}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToOrderUpdates subscribes to order updates
+func (w *WebsocketClient) SubscribeToOrderUpdates(callback func(WSMessage)) (int, error) {
+	sub := Subscription{Type: "orderUpdates"}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToUserFundings subscribes to user funding updates
+func (w *WebsocketClient) SubscribeToUserFundings(
+	user string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "userFundings", User: user}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToUserNonFundingLedgerUpdates subscribes to user non-funding ledger updates
+func (w *WebsocketClient) SubscribeToUserNonFundingLedgerUpdates(
+	user string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "userNonFundingLedgerUpdates", User: user}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToWebData2 subscribes to web data v2
+func (w *WebsocketClient) SubscribeToWebData2(user string, callback func(WSMessage)) (int, error) {
+	sub := Subscription{Type: "webData2", User: user}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToBBO subscribes to best bid/offer data
+func (w *WebsocketClient) SubscribeToBBO(coin string, callback func(WSMessage)) (int, error) {
+	sub := Subscription{Type: "bbo", Coin: coin}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToActiveAssetCtx subscribes to active asset context
+func (w *WebsocketClient) SubscribeToActiveAssetCtx(
+	coin string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "activeAssetCtx", Coin: coin}
+	return w.Subscribe(sub, callback)
+}
+
 func matchSubscription(key subKey, msg WSMessage) bool {
 	switch key.typ {
 	case "l2Book":

@@ -487,3 +487,19 @@ func (i *Info) QueryUserToMultiSigSigners(multiSigUser string) ([]MultiSigSigner
 	}
 	return result, nil
 }
+
+// PerpDexs returns the list of available perpetual dexes
+func (i *Info) PerpDexs() ([]string, error) {
+	resp, err := i.client.post("/info", map[string]any{
+		"type": "perpDexs",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch perp dexs: %w", err)
+	}
+
+	var result []string
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal perp dexs: %w", err)
+	}
+	return result, nil
+}

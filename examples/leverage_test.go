@@ -8,9 +8,10 @@ func TestUpdateLeverage(t *testing.T) {
 	exchange := getTestExchange(t)
 
 	leverage := 5 // 5x leverage
-	coin := "BTC"
+	name := "BTC"
+	isCross := true // Use cross margin
 
-	resp, err := exchange.UpdateLeverage(coin, leverage)
+	resp, err := exchange.UpdateLeverage(leverage, name, isCross)
 	if err != nil {
 		t.Fatalf("Failed to update leverage: %v", err)
 	}
@@ -22,9 +23,9 @@ func TestUpdateIsolatedMargin(t *testing.T) {
 	exchange := getTestExchange(t)
 
 	amount := 1000.0 // Amount in USD
-	coin := "BTC"
+	name := "BTC"
 
-	resp, err := exchange.UpdateIsolatedMargin(coin, amount)
+	resp, err := exchange.UpdateIsolatedMargin(amount, name)
 	if err != nil {
 		t.Fatalf("Failed to update isolated margin: %v", err)
 	}

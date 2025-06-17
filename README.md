@@ -17,16 +17,54 @@ go get github.com/sonirico/go-hyperliquid
 
 ## Features
 
-- Complete WebSocket implementation for real-time market data and user events
-- Full REST API support including:
-  - Market data (L2 order book, trades, candles)
-  - Trading operations (orders, positions, leverage)
-  - User account management
-  - Wallet operations
-- Both mainnet and testnet environments
-- Proper error handling and type safety
-- Built-in reconnection and recovery mechanisms
-- Concurrent-safe operations
+This Go SDK provides **full feature parity** with the official Python SDK, including:
+
+### Trading Features
+
+- **Order Management**: Limit orders, market orders, trigger orders, order modifications
+- **Position Management**: Leverage updates, isolated margin, position closing
+- **Bulk Operations**: Bulk orders, bulk cancellations, bulk modifications
+- **Advanced Trading**: Market open/close with slippage protection, scheduled cancellations
+- **Builder Support**: Order routing through builders with fee structures
+
+### Account Management  
+
+- **Referral System**: Set referral codes, track referral state
+- **Sub-Accounts**: Create and manage sub-accounts, transfer funds
+- **Multi-Signature**: Convert to multi-sig, execute multi-sig actions
+- **Vault Operations**: Vault deposits, withdrawals, and transfers
+
+### Asset Management
+
+- **USD Transfers**: Cross-chain USD transfers, spot transfers
+- **Class Transfers**: USD class transfers (perp ↔ spot), perp dex transfers
+- **Bridge Operations**: Withdraw from bridge with fee management
+- **Token Delegation**: Stake tokens with validators
+- **Spot Trading**: Full spot market support
+
+### Advanced Features
+
+- **Agent Approval**: Approve trading agents with permissions
+- **Builder Fee Management**: Approve and manage builder fees  
+- **Big Blocks**: Enable/disable big block usage
+
+### Deployment Features (Advanced)
+
+- **Spot Deployment**: Token registration, genesis, freeze privileges
+- **Perp Deployment**: Asset registration, oracle management
+- **Hyperliquidity**: Register hyperliquidity assets
+
+### Consensus Layer (Validators)
+
+- **Validator Operations**: Register, unregister, profile management
+- **Signer Operations**: Jail/unjail self, inner actions
+- **Consensus Actions**: Full consensus layer interaction
+
+### WebSocket Features  
+
+- **Market Data**: Real-time L2 book, trades, candles, mid prices
+- **User Events**: Order updates, fills, funding, ledger updates
+- **Advanced Streams**: BBO, active asset context, web data v2
 
 ## Usage
 
@@ -95,12 +133,14 @@ func main() {
 ## Documentation
 
 For detailed API documentation, please refer to:
+
 - [Official Hyperliquid API docs](https://hyperliquid.xyz/docs)
 - [Go package documentation](https://pkg.go.dev/github.com/sonirico/go-hyperliquid)
 
 ### Examples
 
 Check the `examples/` directory for more usage examples:
+
 - WebSocket subscriptions
 - Order management
 - Position handling
@@ -129,8 +169,34 @@ make ci-test
 
 ## Roadmap
 
+### ✅ Completed Features
+
 - [x] Complete WebSocket API implementation
-- [x] REST API client
+- [x] REST API client  
+- [x] All trading operations (orders, positions, leverage)
+- [x] Market data (L2 book, trades, candles, all mids)
+- [x] User account management
+- [x] Referral system implementation
+- [x] Sub-account management
+- [x] Vault operations  
+- [x] USD and spot transfers
+- [x] Bridge operations
+- [x] Agent approval system
+- [x] Builder fee management
+- [x] Multi-signature support
+- [x] Token delegation/staking
+- [x] Spot deployment features
+- [x] Perp deployment features  
+- [x] Consensus layer (validator operations)
+- [x] Full feature parity with Python SDK
+
+### 🚀 Future Enhancements
+
+- [ ] Enhanced documentation with more examples
+- [ ] Performance optimizations
+- [ ] Additional testing and edge case coverage
+- [ ] Rate limiting and retry mechanisms
+- [ ] Monitoring and observability features
 - [x] Order management
 - [x] User account operations
 - [ ] Advanced order types

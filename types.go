@@ -110,7 +110,40 @@ type OrderWire struct {
 	Cloid      string  `json:"c,omitempty"`
 }
 
-// Model types for API responses and data structures
+type ModifyRequest struct {
+	Oid   any          `json:"oid"` // can be int64 or Cloid
+	Order OrderRequest `json:"order"`
+}
+
+type CancelRequest struct {
+	Coin string `json:"coin"`
+	Oid  int64  `json:"oid"`
+}
+
+type CancelByCloidRequest struct {
+	Coin  string `json:"coin"`
+	Cloid string `json:"cloid"`
+}
+
+type ScheduleCancelAction struct {
+	Type string `json:"type"`
+	Time *int64 `json:"time,omitempty"`
+}
+
+type Cloid struct {
+	Value string
+}
+
+func (c Cloid) ToRaw() string {
+	return c.Value
+}
+
+type PerpDexSchemaInput struct {
+	FullName        string  `json:"fullName"`
+	CollateralToken int     `json:"collateralToken"`
+	OracleUpdater   *string `json:"oracleUpdater"`
+}
+
 type L2Book struct {
 	Coin   string    `json:"coin"`
 	Levels [][]Level `json:"levels"`

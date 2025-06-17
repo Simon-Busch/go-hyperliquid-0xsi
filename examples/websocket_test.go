@@ -99,3 +99,72 @@ func TestWebsocket(t *testing.T) {
 		}
 	})
 }
+
+func TestWebsocketConvenienceMethods(t *testing.T) {
+	ws := hyperliquid.NewWebsocketClient(hyperliquid.MainnetAPIURL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := ws.Connect(ctx); err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	// Test convenience methods
+	tests := []struct {
+		name string
+		test func() (int, error)
+	}{
+		{
+			name: "SubscribeToAllMids",
+			test: func() (int, error) {
+				return ws.SubscribeToAllMids(func(msg hyperliquid.WSMessage) {
+					t.Logf("All mids: %s", string(msg.Data))
+				})
+			},
+		},
+		{
+			name: "SubscribeToUserEvents",
+			test: func() (int, error) {
+				return ws.SubscribeToUserEvents("0x0000000000000000000000000000000000000000", func(msg hyperliquid.WSMessage) {
+					t.Logf("User events: %s", string(msg.Data))
+				})
+			},
+		},
+		{
+			name: "SubscribeToCandles",
+			test: func() (int, error) {
+				return ws.SubscribeToCandles("BTC", "1m", func(msg hyperliquid.WSMessage) {
+					t.Logf("Candles: %s", string(msg.Data))
+				})
+			},
+		},
+		{
+			name: "SubscribeToBBO",
+			test: func() (int, error) {
+				return ws.SubscribeToBBO("ETH", func(msg hyperliquid.WSMessage) {
+					t.Logf("BBO: %s", string(msg.Data))
+				})
+			},
+		},
+		{
+			name: "SubscribeToActiveAssetCtx",
+			test: func() (int, error) {
+				return ws.SubscribeToActiveAssetCtx("SOL", func(msg hyperliquid.WSMessage) {
+					t.Logf("Active asset context: %s", string(msg.Data))
+				})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			subID, err := tt.test()
+			if err != nil {
+				t.Fatalf("Failed to subscribe with %s: %v", tt.name, err)
+			}
+			t.Logf("Successfully subscribed with %s, subscription ID: %d", tt.name, subID)
+		})
+	}
+}

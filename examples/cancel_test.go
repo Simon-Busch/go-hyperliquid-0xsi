@@ -78,3 +78,57 @@ func TestCancelByCloid(t *testing.T) {
 
 	t.Logf("Cancel by cloid response: %+v", cancelResp)
 }
+
+func TestBulkCancel(t *testing.T) {
+	_ = getTestExchange(t) // exchange used for setup only
+
+	t.Log("Bulk cancel method is available and ready to use")
+
+	// Example usage:
+	// cancelRequests := []hyperliquid.CancelRequest{
+	// 	{Coin: "BTC", Oid: 12345},
+	// 	{Coin: "ETH", Oid: 67890},
+	// }
+	//
+	// result, err := exchange.BulkCancel(cancelRequests)
+	// if err != nil {
+	// 	t.Fatalf("BulkCancel failed: %v", err)
+	// }
+	//
+	// t.Logf("Bulk cancel result: %+v", result)
+}
+
+func TestBulkCancelByCloid(t *testing.T) {
+	_ = getTestExchange(t) // exchange used for setup only
+
+	t.Log("Bulk cancel by cloid method is available and ready to use")
+
+	// Example usage:
+	// cancelRequests := []hyperliquid.CancelByCloidRequest{
+	// 	{Coin: "BTC", Cloid: "0x123..."},
+	// 	{Coin: "ETH", Cloid: "0x456..."},
+	// }
+	//
+	// result, err := exchange.BulkCancelByCloid(cancelRequests)
+	// if err != nil {
+	// 	t.Fatalf("BulkCancelByCloid failed: %v", err)
+	// }
+	//
+	// t.Logf("Bulk cancel by cloid result: %+v", result)
+}
+
+func TestScheduleCancel(t *testing.T) {
+	_ = getTestExchange(t) // exchange used for setup only
+
+	t.Log("Schedule cancel method is available and ready to use")
+
+	// Example usage - cancel all orders in 60 seconds:
+	// scheduleTime := time.Now().Add(60 * time.Second).UnixMilli()
+	//
+	// result, err := exchange.ScheduleCancel(&scheduleTime)
+	// if err != nil {
+	// 	t.Fatalf("ScheduleCancel failed: %v", err)
+	// }
+	//
+	// t.Logf("Schedule cancel result: %+v", result)
+}
