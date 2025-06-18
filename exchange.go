@@ -13,22 +13,29 @@ import (
 )
 
 type Exchange struct {
-	client      *Client
-	privateKey  *ecdsa.PrivateKey
-	vault       string
-	accountAddr string
-	info        *Info
+	client       *Client
+	privateKey   *ecdsa.PrivateKey
+	vault        string
+	accountAddr  string
+	info         *Info
+	expiresAfter *int64
 }
 
 // executeAction executes an action and unmarshals the response into the given result
 func (e *Exchange) executeAction(action map[string]any, result any) error {
 	timestamp := time.Now().UnixMilli()
 
+	// Add expiration time if set
+	if e.expiresAfter != nil {
+		action["expiresAfter"] = *e.expiresAfter
+	}
+
 	sig, err := SignL1Action(
 		e.privateKey,
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -98,6 +105,7 @@ func (e *Exchange) BulkOrders(orders []OrderRequest, builder *BuilderInfo) ([]Op
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -183,9 +191,10 @@ func (e *Exchange) UpdateIsolatedMargin(amount float64, name string) (*UserState
 }
 
 // SetExpiresAfter sets the expiration time for actions
+// If expiresAfter is nil, actions will not have an expiration time
+// If expiresAfter is set, actions will include this expiration timestamp
 func (e *Exchange) SetExpiresAfter(expiresAfter *int64) {
-	// Note: In Go SDK, we'll store this in the exchange struct
-	// For now, we'll implement the expiration logic directly in each method
+	e.expiresAfter = expiresAfter
 }
 
 // SlippagePrice calculates the slippage price for market orders
@@ -242,7 +251,7 @@ func (e *Exchange) ModifyOrder(
 	orderType OrderType,
 	reduceOnly bool,
 	cloid *string,
-) (any, error) {
+) (*ModifyResponse, error) {
 	modify := ModifyRequest{
 		Oid: oid,
 		Order: OrderRequest{
@@ -259,7 +268,7 @@ func (e *Exchange) ModifyOrder(
 }
 
 // BulkModifyOrders modifies multiple orders
-func (e *Exchange) BulkModifyOrders(modifyRequests []ModifyRequest) (any, error) {
+func (e *Exchange) BulkModifyOrders(modifyRequests []ModifyRequest) (*ModifyResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	modifyWires := make([]map[string]any, len(modifyRequests))
@@ -290,6 +299,7 @@ func (e *Exchange) BulkModifyOrders(modifyRequests []ModifyRequest) (any, error)
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -301,15 +311,15 @@ func (e *Exchange) BulkModifyOrders(modifyRequests []ModifyRequest) (any, error)
 		return nil, err
 	}
 
-	var result any
+	var result ModifyResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // BulkModifyOrdersNew is an alias for BulkModifyOrders to match Python SDK naming
-func (e *Exchange) BulkModifyOrdersNew(modifyRequests []ModifyRequest) (any, error) {
+func (e *Exchange) BulkModifyOrdersNew(modifyRequests []ModifyRequest) (*ModifyResponse, error) {
 	return e.BulkModifyOrders(modifyRequests)
 }
 
@@ -322,7 +332,7 @@ func (e *Exchange) MarketOpen(
 	slippage float64,
 	cloid *string,
 	builder *BuilderInfo,
-) (any, error) {
+) (*OpenOrder, error) {
 	slippagePrice, err := e.SlippagePrice(name, isBuy, slippage, px)
 	if err != nil {
 		return nil, err
@@ -351,7 +361,7 @@ func (e *Exchange) MarketClose(
 	slippage float64,
 	cloid *string,
 	builder *BuilderInfo,
-) (any, error) {
+) (*OpenOrder, error) {
 	address := e.accountAddr
 	if address == "" {
 		address = e.vault
@@ -402,7 +412,7 @@ func (e *Exchange) MarketClose(
 }
 
 // BulkCancel cancels multiple orders
-func (e *Exchange) BulkCancel(cancelRequests []CancelRequest) (any, error) {
+func (e *Exchange) BulkCancel(cancelRequests []CancelRequest) (*BulkCancelResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	cancels := make([]map[string]any, len(cancelRequests))
@@ -423,6 +433,7 @@ func (e *Exchange) BulkCancel(cancelRequests []CancelRequest) (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -434,15 +445,17 @@ func (e *Exchange) BulkCancel(cancelRequests []CancelRequest) (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result BulkCancelResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // BulkCancelByCloid cancels multiple orders by cloid
-func (e *Exchange) BulkCancelByCloid(cancelRequests []CancelByCloidRequest) (any, error) {
+func (e *Exchange) BulkCancelByCloid(
+	cancelRequests []CancelByCloidRequest,
+) (*BulkCancelResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	cancels := make([]map[string]any, len(cancelRequests))
@@ -463,6 +476,7 @@ func (e *Exchange) BulkCancelByCloid(cancelRequests []CancelByCloidRequest) (any
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -474,15 +488,15 @@ func (e *Exchange) BulkCancelByCloid(cancelRequests []CancelByCloidRequest) (any
 		return nil, err
 	}
 
-	var result any
+	var result BulkCancelResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // ScheduleCancel schedules cancellation of all open orders
-func (e *Exchange) ScheduleCancel(scheduleTime *int64) (any, error) {
+func (e *Exchange) ScheduleCancel(scheduleTime *int64) (*ScheduleCancelResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -497,6 +511,7 @@ func (e *Exchange) ScheduleCancel(scheduleTime *int64) (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -508,15 +523,15 @@ func (e *Exchange) ScheduleCancel(scheduleTime *int64) (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result ScheduleCancelResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SetReferrer sets a referral code
-func (e *Exchange) SetReferrer(code string) (any, error) {
+func (e *Exchange) SetReferrer(code string) (*SetReferrerResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -529,6 +544,7 @@ func (e *Exchange) SetReferrer(code string) (any, error) {
 		action,
 		"", // No vault address for referrer
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -540,15 +556,15 @@ func (e *Exchange) SetReferrer(code string) (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result SetReferrerResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // CreateSubAccount creates a new sub-account
-func (e *Exchange) CreateSubAccount(name string) (any, error) {
+func (e *Exchange) CreateSubAccount(name string) (*CreateSubAccountResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -561,6 +577,7 @@ func (e *Exchange) CreateSubAccount(name string) (any, error) {
 		action,
 		"", // No vault address for sub-account creation
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -572,15 +589,15 @@ func (e *Exchange) CreateSubAccount(name string) (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result CreateSubAccountResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // UsdClassTransfer transfers between USD classes
-func (e *Exchange) UsdClassTransfer(amount float64, toPerp bool) (any, error) {
+func (e *Exchange) UsdClassTransfer(amount float64, toPerp bool) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	strAmount := formatFloat(amount)
@@ -600,6 +617,7 @@ func (e *Exchange) UsdClassTransfer(amount float64, toPerp bool) (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -611,15 +629,19 @@ func (e *Exchange) UsdClassTransfer(amount float64, toPerp bool) (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SubAccountTransfer transfers funds to/from sub-account
-func (e *Exchange) SubAccountTransfer(subAccountUser string, isDeposit bool, usd int) (any, error) {
+func (e *Exchange) SubAccountTransfer(
+	subAccountUser string,
+	isDeposit bool,
+	usd int,
+) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -634,6 +656,7 @@ func (e *Exchange) SubAccountTransfer(subAccountUser string, isDeposit bool, usd
 		action,
 		"", // No vault address
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -645,15 +668,19 @@ func (e *Exchange) SubAccountTransfer(subAccountUser string, isDeposit bool, usd
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // VaultUsdTransfer transfers to/from vault
-func (e *Exchange) VaultUsdTransfer(vaultAddress string, isDeposit bool, usd int) (any, error) {
+func (e *Exchange) VaultUsdTransfer(
+	vaultAddress string,
+	isDeposit bool,
+	usd int,
+) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -668,6 +695,7 @@ func (e *Exchange) VaultUsdTransfer(vaultAddress string, isDeposit bool, usd int
 		action,
 		"", // No vault address
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -679,15 +707,15 @@ func (e *Exchange) VaultUsdTransfer(vaultAddress string, isDeposit bool, usd int
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // UsdTransfer transfers USD to another address
-func (e *Exchange) UsdTransfer(amount float64, destination string) (any, error) {
+func (e *Exchange) UsdTransfer(amount float64, destination string) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -702,6 +730,7 @@ func (e *Exchange) UsdTransfer(amount float64, destination string) (any, error) 
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -713,15 +742,18 @@ func (e *Exchange) UsdTransfer(amount float64, destination string) (any, error) 
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotTransfer transfers spot tokens to another address
-func (e *Exchange) SpotTransfer(amount float64, destination, token string) (any, error) {
+func (e *Exchange) SpotTransfer(
+	amount float64,
+	destination, token string,
+) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -737,6 +769,7 @@ func (e *Exchange) SpotTransfer(amount float64, destination, token string) (any,
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -748,15 +781,15 @@ func (e *Exchange) SpotTransfer(amount float64, destination, token string) (any,
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // UseBigBlocks enables or disables big blocks
-func (e *Exchange) UseBigBlocks(enable bool) (any, error) {
+func (e *Exchange) UseBigBlocks(enable bool) (*ApprovalResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -769,6 +802,7 @@ func (e *Exchange) UseBigBlocks(enable bool) (any, error) {
 		action,
 		"", // No vault address
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -780,11 +814,11 @@ func (e *Exchange) UseBigBlocks(enable bool) (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result ApprovalResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // PerpDexClassTransfer transfers tokens between perp dex classes
@@ -792,7 +826,7 @@ func (e *Exchange) PerpDexClassTransfer(
 	dex, token string,
 	amount float64,
 	toPerp bool,
-) (any, error) {
+) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -808,6 +842,7 @@ func (e *Exchange) PerpDexClassTransfer(
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -819,11 +854,11 @@ func (e *Exchange) PerpDexClassTransfer(
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SubAccountSpotTransfer transfers spot tokens to/from sub-account
@@ -832,7 +867,7 @@ func (e *Exchange) SubAccountSpotTransfer(
 	isDeposit bool,
 	token string,
 	amount float64,
-) (any, error) {
+) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -848,6 +883,7 @@ func (e *Exchange) SubAccountSpotTransfer(
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -859,15 +895,19 @@ func (e *Exchange) SubAccountSpotTransfer(
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // TokenDelegate delegates tokens for staking
-func (e *Exchange) TokenDelegate(validator string, wei int, isUndelegate bool) (any, error) {
+func (e *Exchange) TokenDelegate(
+	validator string,
+	wei int,
+	isUndelegate bool,
+) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -883,6 +923,7 @@ func (e *Exchange) TokenDelegate(validator string, wei int, isUndelegate bool) (
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -894,15 +935,18 @@ func (e *Exchange) TokenDelegate(validator string, wei int, isUndelegate bool) (
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // WithdrawFromBridge withdraws tokens from bridge
-func (e *Exchange) WithdrawFromBridge(amount float64, destination string) (any, error) {
+func (e *Exchange) WithdrawFromBridge(
+	amount float64,
+	destination string,
+) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -917,6 +961,7 @@ func (e *Exchange) WithdrawFromBridge(amount float64, destination string) (any, 
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -928,16 +973,16 @@ func (e *Exchange) WithdrawFromBridge(amount float64, destination string) (any, 
 		return nil, err
 	}
 
-	var result any
+	var result TransferResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // ApproveAgent approves an agent to trade on behalf of the user
 // Returns the result and the generated agent private key
-func (e *Exchange) ApproveAgent(name *string) (any, string, error) {
+func (e *Exchange) ApproveAgent(name *string) (*AgentApprovalResponse, string, error) {
 	// Generate agent key
 	agentBytes := make([]byte, 32)
 	if _, err := rand.Read(agentBytes); err != nil {
@@ -968,6 +1013,7 @@ func (e *Exchange) ApproveAgent(name *string) (any, string, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -979,15 +1025,15 @@ func (e *Exchange) ApproveAgent(name *string) (any, string, error) {
 		return nil, "", err
 	}
 
-	var result any
+	var result AgentApprovalResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, "", err
 	}
-	return result, agentKey, nil
+	return &result, agentKey, nil
 }
 
 // ApproveBuilderFee approves builder fee payment
-func (e *Exchange) ApproveBuilderFee(builder string, maxFeeRate string) (any, error) {
+func (e *Exchange) ApproveBuilderFee(builder string, maxFeeRate string) (*ApprovalResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1002,6 +1048,7 @@ func (e *Exchange) ApproveBuilderFee(builder string, maxFeeRate string) (any, er
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1013,15 +1060,18 @@ func (e *Exchange) ApproveBuilderFee(builder string, maxFeeRate string) (any, er
 		return nil, err
 	}
 
-	var result any
+	var result ApprovalResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // ConvertToMultiSigUser converts account to multi-signature user
-func (e *Exchange) ConvertToMultiSigUser(authorizedUsers []string, threshold int) (any, error) {
+func (e *Exchange) ConvertToMultiSigUser(
+	authorizedUsers []string,
+	threshold int,
+) (*MultiSigConversionResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	// Sort users as done in Python
@@ -1048,6 +1098,7 @@ func (e *Exchange) ConvertToMultiSigUser(authorizedUsers []string, threshold int
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1059,11 +1110,11 @@ func (e *Exchange) ConvertToMultiSigUser(authorizedUsers []string, threshold int
 		return nil, err
 	}
 
-	var result any
+	var result MultiSigConversionResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // Spot Deploy Methods
@@ -1075,7 +1126,7 @@ func (e *Exchange) SpotDeployRegisterToken(
 	weiDecimals int,
 	maxGas int,
 	fullName string,
-) (any, error) {
+) (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1096,6 +1147,7 @@ func (e *Exchange) SpotDeployRegisterToken(
 		action,
 		"", // No vault address for spot deploy
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1107,15 +1159,15 @@ func (e *Exchange) SpotDeployRegisterToken(
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotDeployUserGenesis initializes user genesis for spot trading
-func (e *Exchange) SpotDeployUserGenesis(balances map[string]float64) (any, error) {
+func (e *Exchange) SpotDeployUserGenesis(balances map[string]float64) (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1128,6 +1180,7 @@ func (e *Exchange) SpotDeployUserGenesis(balances map[string]float64) (any, erro
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1139,15 +1192,15 @@ func (e *Exchange) SpotDeployUserGenesis(balances map[string]float64) (any, erro
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotDeployEnableFreezePrivilege enables freeze privilege for spot deployer
-func (e *Exchange) SpotDeployEnableFreezePrivilege() (any, error) {
+func (e *Exchange) SpotDeployEnableFreezePrivilege() (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1159,6 +1212,7 @@ func (e *Exchange) SpotDeployEnableFreezePrivilege() (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1170,15 +1224,15 @@ func (e *Exchange) SpotDeployEnableFreezePrivilege() (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotDeployFreezeUser freezes a user in spot trading
-func (e *Exchange) SpotDeployFreezeUser(userAddress string) (any, error) {
+func (e *Exchange) SpotDeployFreezeUser(userAddress string) (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1191,6 +1245,7 @@ func (e *Exchange) SpotDeployFreezeUser(userAddress string) (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1202,15 +1257,15 @@ func (e *Exchange) SpotDeployFreezeUser(userAddress string) (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotDeployRevokeFreezePrivilege revokes freeze privilege for spot deployer
-func (e *Exchange) SpotDeployRevokeFreezePrivilege() (any, error) {
+func (e *Exchange) SpotDeployRevokeFreezePrivilege() (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1222,6 +1277,7 @@ func (e *Exchange) SpotDeployRevokeFreezePrivilege() (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1233,15 +1289,15 @@ func (e *Exchange) SpotDeployRevokeFreezePrivilege() (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotDeployGenesis initializes spot genesis
-func (e *Exchange) SpotDeployGenesis(deployer string, dexName string) (any, error) {
+func (e *Exchange) SpotDeployGenesis(deployer string, dexName string) (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1255,6 +1311,7 @@ func (e *Exchange) SpotDeployGenesis(deployer string, dexName string) (any, erro
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1266,15 +1323,18 @@ func (e *Exchange) SpotDeployGenesis(deployer string, dexName string) (any, erro
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotDeployRegisterSpot registers spot market
-func (e *Exchange) SpotDeployRegisterSpot(baseToken string, quoteToken string) (any, error) {
+func (e *Exchange) SpotDeployRegisterSpot(
+	baseToken string,
+	quoteToken string,
+) (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1288,6 +1348,7 @@ func (e *Exchange) SpotDeployRegisterSpot(baseToken string, quoteToken string) (
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1299,15 +1360,18 @@ func (e *Exchange) SpotDeployRegisterSpot(baseToken string, quoteToken string) (
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotDeployRegisterHyperliquidity registers hyperliquidity spot
-func (e *Exchange) SpotDeployRegisterHyperliquidity(name string, tokens []string) (any, error) {
+func (e *Exchange) SpotDeployRegisterHyperliquidity(
+	name string,
+	tokens []string,
+) (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1321,6 +1385,7 @@ func (e *Exchange) SpotDeployRegisterHyperliquidity(name string, tokens []string
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1332,15 +1397,17 @@ func (e *Exchange) SpotDeployRegisterHyperliquidity(name string, tokens []string
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // SpotDeploySetDeployerTradingFeeShare sets deployer trading fee share
-func (e *Exchange) SpotDeploySetDeployerTradingFeeShare(feeShare float64) (any, error) {
+func (e *Exchange) SpotDeploySetDeployerTradingFeeShare(
+	feeShare float64,
+) (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1353,6 +1420,7 @@ func (e *Exchange) SpotDeploySetDeployerTradingFeeShare(feeShare float64) (any, 
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1364,11 +1432,11 @@ func (e *Exchange) SpotDeploySetDeployerTradingFeeShare(feeShare float64) (any, 
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // Perp Deploy Methods
@@ -1377,7 +1445,7 @@ func (e *Exchange) SpotDeploySetDeployerTradingFeeShare(feeShare float64) (any, 
 func (e *Exchange) PerpDeployRegisterAsset(
 	asset string,
 	perpDexInput PerpDexSchemaInput,
-) (any, error) {
+) (*PerpDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1391,6 +1459,7 @@ func (e *Exchange) PerpDeployRegisterAsset(
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1402,15 +1471,18 @@ func (e *Exchange) PerpDeployRegisterAsset(
 		return nil, err
 	}
 
-	var result any
+	var result PerpDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // PerpDeploySetOracle sets oracle for perpetual asset
-func (e *Exchange) PerpDeploySetOracle(asset string, oracleAddress string) (any, error) {
+func (e *Exchange) PerpDeploySetOracle(
+	asset string,
+	oracleAddress string,
+) (*SpotDeployResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1424,6 +1496,7 @@ func (e *Exchange) PerpDeploySetOracle(asset string, oracleAddress string) (any,
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1435,17 +1508,17 @@ func (e *Exchange) PerpDeploySetOracle(asset string, oracleAddress string) (any,
 		return nil, err
 	}
 
-	var result any
+	var result SpotDeployResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // CSigner Methods
 
 // CSignerUnjailSelf unjails self as consensus signer
-func (e *Exchange) CSignerUnjailSelf() (any, error) {
+func (e *Exchange) CSignerUnjailSelf() (*ValidatorResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1457,6 +1530,7 @@ func (e *Exchange) CSignerUnjailSelf() (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1468,15 +1542,15 @@ func (e *Exchange) CSignerUnjailSelf() (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result ValidatorResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // CSignerJailSelf jails self as consensus signer
-func (e *Exchange) CSignerJailSelf() (any, error) {
+func (e *Exchange) CSignerJailSelf() (*ValidatorResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1488,6 +1562,7 @@ func (e *Exchange) CSignerJailSelf() (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1499,15 +1574,15 @@ func (e *Exchange) CSignerJailSelf() (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result ValidatorResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // CSignerInner executes inner consensus signer action
-func (e *Exchange) CSignerInner(innerAction map[string]any) (any, error) {
+func (e *Exchange) CSignerInner(innerAction map[string]any) (*ValidatorResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1520,6 +1595,7 @@ func (e *Exchange) CSignerInner(innerAction map[string]any) (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1531,17 +1607,17 @@ func (e *Exchange) CSignerInner(innerAction map[string]any) (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result ValidatorResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // CValidator Methods
 
 // CValidatorRegister registers as consensus validator
-func (e *Exchange) CValidatorRegister(validatorProfile map[string]any) (any, error) {
+func (e *Exchange) CValidatorRegister(validatorProfile map[string]any) (*ValidatorResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1554,6 +1630,7 @@ func (e *Exchange) CValidatorRegister(validatorProfile map[string]any) (any, err
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1565,15 +1642,15 @@ func (e *Exchange) CValidatorRegister(validatorProfile map[string]any) (any, err
 		return nil, err
 	}
 
-	var result any
+	var result ValidatorResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // CValidatorChangeProfile changes validator profile
-func (e *Exchange) CValidatorChangeProfile(newProfile map[string]any) (any, error) {
+func (e *Exchange) CValidatorChangeProfile(newProfile map[string]any) (*ValidatorResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1586,6 +1663,7 @@ func (e *Exchange) CValidatorChangeProfile(newProfile map[string]any) (any, erro
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1597,15 +1675,15 @@ func (e *Exchange) CValidatorChangeProfile(newProfile map[string]any) (any, erro
 		return nil, err
 	}
 
-	var result any
+	var result ValidatorResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 // CValidatorUnregister unregisters as consensus validator
-func (e *Exchange) CValidatorUnregister() (any, error) {
+func (e *Exchange) CValidatorUnregister() (*ValidatorResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	action := map[string]any{
@@ -1617,6 +1695,7 @@ func (e *Exchange) CValidatorUnregister() (any, error) {
 		action,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1628,19 +1707,18 @@ func (e *Exchange) CValidatorUnregister() (any, error) {
 		return nil, err
 	}
 
-	var result any
+	var result ValidatorResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
-// MultiSig executes multi-signature action
 func (e *Exchange) MultiSig(
 	action map[string]any,
 	signers []string,
 	signatures []string,
-) (any, error) {
+) (*MultiSigResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
 	multiSigAction := map[string]any{
@@ -1655,6 +1733,7 @@ func (e *Exchange) MultiSig(
 		multiSigAction,
 		e.vault,
 		timestamp,
+		e.expiresAfter,
 		e.client.baseURL == MainnetAPIURL,
 	)
 	if err != nil {
@@ -1666,48 +1745,31 @@ func (e *Exchange) MultiSig(
 		return nil, err
 	}
 
-	var result any
+	var result MultiSigResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
-// Helper functions
-func roundToDecimals(value float64, decimals int) float64 {
-	// Implementation for rounding to specific decimals
-	// This is a simplified version - proper implementation would use math.Pow
-	return value
-}
-
-func parseFloat(s string) float64 {
-	// Implementation for parsing float from string
-	// This is a simplified version - proper implementation would use strconv.ParseFloat
-	return 0.0
-}
-
-func abs(x float64) float64 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-func formatFloat(f float64) string {
-	// Implementation for formatting float to string
-	// This is a simplified version - proper implementation would use strconv.FormatFloat
-	return fmt.Sprintf("%f", f)
-}
-
-func (e *Exchange) postAction(action, signature any, nonce int64) ([]byte, error) {
+func (e *Exchange) postAction(
+	action map[string]any,
+	signature string,
+	nonce int64,
+) ([]byte, error) {
 	payload := map[string]any{
 		"action":    action,
 		"nonce":     nonce,
 		"signature": signature,
 	}
 
-	if action.(map[string]any)["type"] != "usdClassTransfer" {
+	if action["type"] != "usdClassTransfer" {
 		payload["vaultAddress"] = e.vault
+	}
+
+	// Add expires_after if set (matching Python SDK implementation)
+	if e.expiresAfter != nil {
+		payload["expiresAfter"] = *e.expiresAfter
 	}
 
 	return e.client.post("/exchange", payload)
