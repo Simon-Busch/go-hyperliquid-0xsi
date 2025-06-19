@@ -332,3 +332,104 @@ type OrderStatus struct {
 	Order  *OpenOrder `json:"order"`
 	Status string     `json:"status"`
 }
+
+// Response types for exchange operations
+type OrderResponse struct {
+	Status string       `json:"status"`
+	Data   *OrderStatus `json:"data,omitempty"`
+	Error  string       `json:"error,omitempty"`
+}
+
+type BulkOrderResponse struct {
+	Status string        `json:"status"`
+	Data   []OrderStatus `json:"data,omitempty"`
+	Error  string        `json:"error,omitempty"`
+}
+
+type CancelResponse struct {
+	Status string     `json:"status"`
+	Data   *OpenOrder `json:"data,omitempty"`
+	Error  string     `json:"error,omitempty"`
+}
+
+type BulkCancelResponse struct {
+	Status string      `json:"status"`
+	Data   []OpenOrder `json:"data,omitempty"`
+	Error  string      `json:"error,omitempty"`
+}
+
+type ModifyResponse struct {
+	Status string        `json:"status"`
+	Data   []OrderStatus `json:"data,omitempty"`
+	Error  string        `json:"error,omitempty"`
+}
+
+type TransferResponse struct {
+	Status string `json:"status"`
+	TxHash string `json:"txHash,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type ApprovalResponse struct {
+	Status string `json:"status"`
+	TxHash string `json:"txHash,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type CreateSubAccountResponse struct {
+	Status string      `json:"status"`
+	Data   *SubAccount `json:"data,omitempty"`
+	Error  string      `json:"error,omitempty"`
+}
+
+type SetReferrerResponse struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+type ScheduleCancelResponse struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+type AgentApprovalResponse struct {
+	Status string `json:"status"`
+	TxHash string `json:"txHash,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type MultiSigConversionResponse struct {
+	Status string `json:"status"`
+	TxHash string `json:"txHash,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type SpotDeployResponse struct {
+	Status string `json:"status"`
+	TxHash string `json:"txHash,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type ValidatorResponse struct {
+	Status string `json:"status"`
+	TxHash string `json:"txHash,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type MultiSigResponse struct {
+	Status string `json:"status"`
+	TxHash string `json:"txHash,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type PerpDeployResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		Statuses []TxStatus `json:"statuses"`
+	} `json:"data"`
+}
+
+type TxStatus struct {
+	Coin   string `json:"coin"`
+	Status string `json:"status"`
+}
