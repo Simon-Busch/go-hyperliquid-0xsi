@@ -40,6 +40,9 @@ func actionHash(action any, vaultAddress string, nonce int64, expiresAfter *int6
 	data := buf.Bytes()
 
 	// Add nonce as 8 bytes big endian
+	if nonce < 0 {
+		panic(fmt.Sprintf("nonce cannot be negative: %d", nonce))
+	}
 	nonceBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(nonceBytes, uint64(nonce))
 	data = append(data, nonceBytes...)
@@ -54,6 +57,9 @@ func actionHash(action any, vaultAddress string, nonce int64, expiresAfter *int6
 
 	// Add expires_after if provided
 	if expiresAfter != nil {
+		if *expiresAfter < 0 {
+			panic(fmt.Sprintf("expiresAfter cannot be negative: %d", *expiresAfter))
+		}
 		data = append(data, 0x00)
 		expiresAfterBytes := make([]byte, 8)
 		binary.BigEndian.PutUint64(expiresAfterBytes, uint64(*expiresAfter))
