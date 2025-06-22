@@ -2,13 +2,16 @@ package examples
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/sonirico/go-hyperliquid"
 )
 
 func TestCandlesSnapshot(t *testing.T) {
+	godotenv.Overload()
 	info := hyperliquid.NewInfo(hyperliquid.MainnetAPIURL, true, nil, nil)
 
 	now := time.Now()
@@ -28,6 +31,7 @@ func TestCandlesSnapshot(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			fmt.Printf("Fetching candles for %s with interval %s", tt.coin, tt.interval)
 			candles, err := info.CandlesSnapshot(tt.coin, tt.interval, startTime, endTime)
 			if err != nil {
 				t.Fatalf("Failed to fetch candles: %v", err)

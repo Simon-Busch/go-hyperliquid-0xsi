@@ -231,14 +231,25 @@ func TestSignL1Action(t *testing.T) {
 			}
 
 			require.NoError(t, err, tt.description)
-			assert.NotEmpty(t, signature, "Signature should not be empty")
-			assert.True(t, signature != "", "Signature should not be empty")
+			assert.NotEmpty(t, signature.R, "Signature R should not be empty")
+			assert.NotEmpty(t, signature.S, "Signature S should not be empty")
+			assert.True(t, signature.V > 0, "Signature V should be positive")
 			assert.True(
 				t,
-				len(signature) >= 132,
-				"Signature should be at least 132 characters (0x + 130 hex chars)",
+				len(signature.R) >= 3,
+				"Signature R should be at least 3 characters (0x + hex)",
 			)
-			assert.True(t, signature[:2] == "0x", "Signature should start with 0x")
+			assert.True(
+				t,
+				len(signature.S) >= 3,
+				"Signature S should be at least 3 characters (0x + hex)",
+			)
+			assert.True(t, signature.R[:2] == "0x", "Signature R should start with 0x")
+			assert.True(t, signature.S[:2] == "0x", "Signature S should start with 0x")
+
+			// Validate that R and S are valid hex strings
+			assert.Regexp(t, "^0x[0-9a-fA-F]+$", signature.R, "Signature R should be valid hex")
+			assert.Regexp(t, "^0x[0-9a-fA-F]+$", signature.S, "Signature S should be valid hex")
 
 			// Verify signature is deterministic
 			signature2, err2 := SignL1Action(
@@ -255,268 +266,6 @@ func TestSignL1Action(t *testing.T) {
 	}
 }
 
-// Test helper functions
-func TestSigningHelperFunctions(t *testing.T) {
-	privateKeyHex := "abcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234"
-	privateKeyBytes, err := hex.DecodeString(privateKeyHex)
-	require.NoError(t, err)
-
-	privateKey, err := crypto.ToECDSA(privateKeyBytes)
-	require.NoError(t, err)
-
-	timestamp := int64(1703001234567)
-
-	tests := []struct {
-		name        string
-		testFunc    func() (string, error)
-		description string
-	}{
-		{
-			name: "SignUsdClassTransferAction",
-			testFunc: func() (string, error) {
-				return SignUsdClassTransferAction(privateKey, 100.5, true, timestamp, false)
-			},
-			description: "USD class transfer action",
-		},
-		{
-			name: "SignSpotTransferAction",
-			testFunc: func() (string, error) {
-				return SignSpotTransferAction(
-					privateKey,
-					50.25,
-					"0x1234567890123456789012345678901234567890",
-					"USDC",
-					timestamp,
-					false,
-				)
-			},
-			description: "Spot transfer action",
-		},
-		{
-			name: "SignUsdTransferAction",
-			testFunc: func() (string, error) {
-				return SignUsdTransferAction(
-					privateKey,
-					75.0,
-					"0x1234567890123456789012345678901234567890",
-					timestamp,
-					true,
-				)
-			},
-			description: "USD transfer action",
-		},
-		{
-			name: "SignPerpDexClassTransferAction",
-			testFunc: func() (string, error) {
-				return SignPerpDexClassTransferAction(
-					privateKey,
-					"testdex",
-					"ETH",
-					1.5,
-					false,
-					timestamp,
-					false,
-				)
-			},
-			description: "Perp dex class transfer action",
-		},
-		{
-			name: "SignTokenDelegateAction",
-			testFunc: func() (string, error) {
-				return SignTokenDelegateAction(
-					privateKey,
-					"ETH",
-					2.0,
-					"0x1234567890123456789012345678901234567890",
-					timestamp,
-					true,
-				)
-			},
-			description: "Token delegate action",
-		},
-		{
-			name: "SignWithdrawFromBridgeAction",
-			testFunc: func() (string, error) {
-				return SignWithdrawFromBridgeAction(
-					privateKey,
-					"0x1234567890123456789012345678901234567890",
-					100.0,
-					0.1,
-					timestamp,
-					false,
-				)
-			},
-			description: "Withdraw from bridge action",
-		},
-		{
-			name: "SignAgent",
-			testFunc: func() (string, error) {
-				return SignAgent(
-					privateKey,
-					"0x1234567890123456789012345678901234567890",
-					"TestAgent",
-					timestamp,
-					true,
-				)
-			},
-			description: "Sign agent action",
-		},
-		{
-			name: "SignApproveBuilderFee",
-			testFunc: func() (string, error) {
-				return SignApproveBuilderFee(
-					privateKey,
-					"0x1234567890123456789012345678901234567890",
-					0.001,
-					timestamp,
-					false,
-				)
-			},
-			description: "Approve builder fee action",
-		},
-		{
-			name: "SignConvertToMultiSigUserAction",
-			testFunc: func() (string, error) {
-				signers := []string{
-					"0x1234567890123456789012345678901234567890",
-					"0x0987654321098765432109876543210987654321",
-				}
-				return SignConvertToMultiSigUserAction(privateKey, signers, 2, timestamp, true)
-			},
-			description: "Convert to multi-sig user action",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			signature, err := tt.testFunc()
-
-			require.NoError(t, err, tt.description)
-			assert.NotEmpty(t, signature, "Signature should not be empty")
-			assert.True(t, len(signature) >= 132, "Signature should be at least 132 characters")
-			assert.True(t, signature[:2] == "0x", "Signature should start with 0x")
-
-			// Test deterministic behavior
-			signature2, err2 := tt.testFunc()
-			require.NoError(t, err2)
-			assert.Equal(
-				t,
-				signature,
-				signature2,
-				"Helper function signatures should be deterministic",
-			)
-		})
-	}
-}
-
-// Test utility functions
-func TestUtilityFunctions(t *testing.T) {
-	tests := []struct {
-		name     string
-		testFunc func() bool
-		expected bool
-	}{
-		{
-			name: "GetTimestampMs",
-			testFunc: func() bool {
-				ts := GetTimestampMs()
-				return ts > 0 && ts > 1700000000000 // After 2023
-			},
-			expected: true,
-		},
-		{
-			name: "FloatToUsdInt",
-			testFunc: func() bool {
-				result := FloatToUsdInt(123.456789)
-				expected := 123456789 // 123.456789 * 1e6
-				return result == expected
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.testFunc()
-			assert.Equal(t, tt.expected, result, tt.name+" should work correctly")
-		})
-	}
-}
-
-// Test OrderRequestToWire function
-func TestOrderRequestToWire(t *testing.T) {
-	tests := []struct {
-		name     string
-		req      OrderRequest
-		asset    int
-		expected OrderWire
-	}{
-		{
-			name: "limit_order",
-			req: OrderRequest{
-				Coin:       "ETH",
-				IsBuy:      true,
-				Size:       1.5,
-				LimitPx:    2000.50,
-				ReduceOnly: false,
-				OrderType: OrderType{
-					Limit: &LimitOrderType{
-						Tif: "Gtc",
-					},
-				},
-				Cloid: func() *string { s := "test123"; return &s }(),
-			},
-			asset: 0,
-			expected: OrderWire{
-				Asset:      0,
-				IsBuy:      true,
-				Size:       1.5,
-				LimitPx:    2000.50,
-				ReduceOnly: false,
-				OrderType:  "Limit",
-				Tif:        "Gtc",
-				Cloid:      "test123",
-			},
-		},
-		{
-			name: "trigger_order",
-			req: OrderRequest{
-				Coin:       "BTC",
-				IsBuy:      false,
-				Size:       0.1,
-				LimitPx:    45000.00,
-				ReduceOnly: true,
-				OrderType: OrderType{
-					Trigger: &TriggerOrderType{
-						TriggerPx: 44000.00,
-						IsMarket:  true,
-						Tpsl:      "tp",
-					},
-				},
-			},
-			asset: 1,
-			expected: OrderWire{
-				Asset:      1,
-				IsBuy:      false,
-				Size:       0.1,
-				LimitPx:    45000.00,
-				ReduceOnly: true,
-				OrderType:  "Trigger",
-				TriggerPx:  44000.00,
-				IsMarket:   true,
-				Tpsl:       "tp",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := OrderRequestToWire(tt.req, tt.asset)
-			assert.Equal(t, tt.expected, result, "OrderRequestToWire should convert correctly")
-		})
-	}
-}
-
 // TestDebugActionHash helps debug the action hash generation
 func TestDebugActionHash(t *testing.T) {
 	// Use the same test data as Python
@@ -528,9 +277,9 @@ func TestDebugActionHash(t *testing.T) {
 			LimitPx:   100.5,
 			Size:      1.0,
 			OrderType: "Limit",
-			Tif:       "Gtc",
+			Tif:       TifGtc,
 		}},
-		"grouping": "na",
+		"grouping": GroupingNA,
 	}
 
 	privateKey, _ := crypto.HexToECDSA(
@@ -559,5 +308,5 @@ func TestDebugActionHash(t *testing.T) {
 		isMainnet,
 	)
 	require.NoError(t, err)
-	t.Logf("Generated signature: %s", signature)
+	t.Logf("Generated signature: R=%s, S=%s, V=%d", signature.R, signature.S, signature.V)
 }

@@ -5,21 +5,24 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/joho/godotenv"
+
 	"github.com/sonirico/go-hyperliquid"
 )
 
 func TestCancelOrder(t *testing.T) {
-	exchange := getTestExchange(t)
+	godotenv.Overload()
+	exchange := newTestExchange(t)
 
 	// First place an order to cancel
-	orderReq := hyperliquid.OrderRequest{
-		Coin:    "BTC",
-		IsBuy:   true,
-		Size:    0.1,
-		LimitPx: 40000.0,
+	orderReq := hyperliquid.CreateOrderRequest{
+		Coin:  "BTC",
+		IsBuy: true,
+		Size:  0.1,
+		Price: 40000.0,
 		OrderType: hyperliquid.OrderType{
 			Limit: &hyperliquid.LimitOrderType{
-				Tif: "Gtc",
+				Tif: hyperliquid.TifGtc,
 			},
 		},
 	}
@@ -30,7 +33,12 @@ func TestCancelOrder(t *testing.T) {
 	}
 
 	// Extract order ID from response
-	orderID := resp.Oid
+	var orderID int64
+	if resp.Resting != nil {
+		orderID = resp.Resting.Oid
+	} else {
+		t.Skip("Order was filled immediately, cannot test cancel")
+	}
 
 	// Cancel the order
 	cancelResp, err := exchange.Cancel("BTC", orderID)
@@ -42,7 +50,8 @@ func TestCancelOrder(t *testing.T) {
 }
 
 func TestCancelByCloid(t *testing.T) {
-	exchange := getTestExchange(t)
+	godotenv.Overload()
+	exchange := newTestExchange(t)
 
 	// Generate a random cloid
 	cloidBytes := make([]byte, 16)
@@ -52,17 +61,17 @@ func TestCancelByCloid(t *testing.T) {
 	cloid := "0x" + hex.EncodeToString(cloidBytes)
 
 	// Place an order with cloid
-	orderReq := hyperliquid.OrderRequest{
-		Coin:    "BTC",
-		IsBuy:   true,
-		Size:    0.1,
-		LimitPx: 40000.0,
+	orderReq := hyperliquid.CreateOrderRequest{
+		Coin:  "BTC",
+		IsBuy: true,
+		Size:  0.1,
+		Price: 40000.0,
 		OrderType: hyperliquid.OrderType{
 			Limit: &hyperliquid.LimitOrderType{
-				Tif: "Gtc",
+				Tif: hyperliquid.TifGtc,
 			},
 		},
-		Cloid: &cloid,
+		ClientOrderID: &cloid,
 	}
 
 	_, err := exchange.Order(orderReq, nil)
@@ -77,58 +86,4 @@ func TestCancelByCloid(t *testing.T) {
 	}
 
 	t.Logf("Cancel by cloid response: %+v", cancelResp)
-}
-
-func TestBulkCancel(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
-
-	t.Log("Bulk cancel method is available and ready to use")
-
-	// Example usage:
-	// cancelRequests := []hyperliquid.CancelRequest{
-	// 	{Coin: "BTC", Oid: 12345},
-	// 	{Coin: "ETH", Oid: 67890},
-	// }
-	//
-	// result, err := exchange.BulkCancel(cancelRequests)
-	// if err != nil {
-	// 	t.Fatalf("BulkCancel failed: %v", err)
-	// }
-	//
-	// t.Logf("Bulk cancel result: %+v", result)
-}
-
-func TestBulkCancelByCloid(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
-
-	t.Log("Bulk cancel by cloid method is available and ready to use")
-
-	// Example usage:
-	// cancelRequests := []hyperliquid.CancelByCloidRequest{
-	// 	{Coin: "BTC", Cloid: "0x123..."},
-	// 	{Coin: "ETH", Cloid: "0x456..."},
-	// }
-	//
-	// result, err := exchange.BulkCancelByCloid(cancelRequests)
-	// if err != nil {
-	// 	t.Fatalf("BulkCancelByCloid failed: %v", err)
-	// }
-	//
-	// t.Logf("Bulk cancel by cloid result: %+v", result)
-}
-
-func TestScheduleCancel(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
-
-	t.Log("Schedule cancel method is available and ready to use")
-
-	// Example usage - cancel all orders in 60 seconds:
-	// scheduleTime := time.Now().Add(60 * time.Second).UnixMilli()
-	//
-	// result, err := exchange.ScheduleCancel(&scheduleTime)
-	// if err != nil {
-	// 	t.Fatalf("ScheduleCancel failed: %v", err)
-	// }
-	//
-	// t.Logf("Schedule cancel result: %+v", result)
 }

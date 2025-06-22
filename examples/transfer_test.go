@@ -3,15 +3,13 @@ package examples
 import (
 	"os"
 	"testing"
+
+	"github.com/joho/godotenv"
 )
 
 func TestUsdTransfer(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
-
-	// Skip if running in CI or without proper credentials
-	if os.Getenv("HL_PRIVATE_KEY") == "" {
-		t.Skip("skipping test: HL_PRIVATE_KEY not set")
-	}
+	godotenv.Overload()
+	exchange := newTestExchange(t) // exchange used for setup only
 
 	// Example destination address (replace with actual test address)
 	destination := "0x0000000000000000000000000000000000000000"
@@ -23,17 +21,18 @@ func TestUsdTransfer(t *testing.T) {
 	t.Log("USD transfer method is available and ready to use")
 
 	// Uncomment the line below only when you want to execute actual transfers
-	// result, err := exchange.UsdTransfer(amount, destination)
-	//
-	// if err != nil {
-	// 	t.Fatalf("UsdTransfer failed: %v", err)
-	// }
-	//
-	// t.Logf("Transfer result: %+v", result)
+	result, err := exchange.UsdTransfer(amount, destination)
+
+	if err != nil {
+		t.Fatalf("UsdTransfer failed: %v", err)
+	}
+
+	t.Logf("Transfer result: %+v", result)
 }
 
 func TestSpotTransfer(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
+	godotenv.Overload()
+	exchange := newTestExchange(t) // exchange used for setup only
 
 	// Skip if running in CI or without proper credentials
 	if os.Getenv("HL_PRIVATE_KEY") == "" {
@@ -50,18 +49,18 @@ func TestSpotTransfer(t *testing.T) {
 	// This would normally execute the transfer, but we'll skip for safety
 	t.Log("Spot transfer method is available and ready to use")
 
-	// Uncomment the line below only when you want to execute actual transfers
-	// result, err := exchange.SpotTransfer(amount, destination, token)
-	//
-	// if err != nil {
-	// 	t.Fatalf("SpotTransfer failed: %v", err)
-	// }
-	//
-	// t.Logf("Transfer result: %+v", result)
+	result, err := exchange.SpotTransfer(amount, destination, token)
+
+	if err != nil {
+		t.Fatalf("SpotTransfer failed: %v", err)
+	}
+
+	t.Logf("Transfer result: %+v", result)
 }
 
 func TestUsdClassTransfer(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
+	godotenv.Overload()
+	exchange := newTestExchange(t) // exchange used for setup only
 
 	// Skip if running in CI or without proper credentials
 	if os.Getenv("HL_PRIVATE_KEY") == "" {
@@ -76,18 +75,18 @@ func TestUsdClassTransfer(t *testing.T) {
 	// This would normally execute the transfer, but we'll skip for safety
 	t.Log("USD class transfer method is available and ready to use")
 
-	// Uncomment the line below only when you want to execute actual transfers
-	// result, err := exchange.UsdClassTransfer(amount, toPerp)
-	//
-	// if err != nil {
-	// 	t.Fatalf("UsdClassTransfer failed: %v", err)
-	// }
-	//
-	// t.Logf("Transfer result: %+v", result)
+	result, err := exchange.UsdClassTransfer(amount, toPerp)
+
+	if err != nil {
+		t.Fatalf("UsdClassTransfer failed: %v", err)
+	}
+
+	t.Logf("Transfer result: %+v", result)
 }
 
 func TestSetReferrer(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
+	godotenv.Overload()
+	exchange := newTestExchange(t) // exchange used for setup only
 
 	// Skip if running in CI or without proper credentials
 	if os.Getenv("HL_PRIVATE_KEY") == "" {
@@ -101,18 +100,18 @@ func TestSetReferrer(t *testing.T) {
 	// This would normally execute the referrer setting, but we'll skip for safety
 	t.Log("Set referrer method is available and ready to use")
 
-	// Uncomment the line below only when you want to execute actual operations
-	// result, err := exchange.SetReferrer(referralCode)
-	//
-	// if err != nil {
-	// 	t.Fatalf("SetReferrer failed: %v", err)
-	// }
-	//
-	// t.Logf("Referrer result: %+v", result)
+	result, err := exchange.SetReferrer(referralCode)
+
+	if err != nil {
+		t.Fatalf("SetReferrer failed: %v", err)
+	}
+
+	t.Logf("Referrer result: %+v", result)
 }
 
 func TestCreateSubAccount(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
+	godotenv.Overload()
+	exchange := newTestExchange(t) // exchange used for setup only
 
 	// Skip if running in CI or without proper credentials
 	if os.Getenv("HL_PRIVATE_KEY") == "" {
@@ -126,18 +125,18 @@ func TestCreateSubAccount(t *testing.T) {
 	// This would normally execute the sub-account creation, but we'll skip for safety
 	t.Log("Create sub-account method is available and ready to use")
 
-	// Uncomment the line below only when you want to execute actual operations
-	// result, err := exchange.CreateSubAccount(subAccountName)
-	//
-	// if err != nil {
-	// 	t.Fatalf("CreateSubAccount failed: %v", err)
-	// }
-	//
-	// t.Logf("Sub-account creation result: %+v", result)
+	result, err := exchange.CreateSubAccount(subAccountName)
+
+	if err != nil {
+		t.Fatalf("CreateSubAccount failed: %v", err)
+	}
+
+	t.Logf("Sub-account creation result: %+v", result)
 }
 
 func TestApproveAgent(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
+	godotenv.Overload()
+	exchange := newTestExchange(t) // exchange used for setup only
 
 	// Skip if running in CI or without proper credentials
 	if os.Getenv("HL_PRIVATE_KEY") == "" {
@@ -151,13 +150,12 @@ func TestApproveAgent(t *testing.T) {
 	// This would normally execute the agent approval, but we'll skip for safety
 	t.Log("Approve agent method is available and ready to use")
 
-	// Uncomment the line below only when you want to execute actual operations
-	// result, agentKey, err := exchange.ApproveAgent(&agentName)
-	//
-	// if err != nil {
-	// 	t.Fatalf("ApproveAgent failed: %v", err)
-	// }
-	//
-	// t.Logf("Agent approval result: %+v", result)
-	// t.Logf("Generated agent key: %s", agentKey)
+	result, agentKey, err := exchange.ApproveAgent(&agentName)
+
+	if err != nil {
+		t.Fatalf("ApproveAgent failed: %v", err)
+	}
+
+	t.Logf("Agent approval result: %+v", result)
+	t.Logf("Generated agent key: %s", agentKey)
 }

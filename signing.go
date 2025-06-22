@@ -111,6 +111,51 @@ func l1Payload(phantomAgent map[string]any) apitypes.TypedData {
 	}
 }
 
+// SignatureResult represents the structured signature result
+type SignatureResult struct {
+	R string `json:"r"`
+	S string `json:"s"`
+	V int    `json:"v"`
+}
+
+// signInner implements the same logic as Python's sign_inner
+func signInner(
+	privateKey *ecdsa.PrivateKey,
+	typedData apitypes.TypedData,
+) (SignatureResult, error) {
+	// Create EIP-712 hash
+	domainSeparator, err := typedData.HashStruct("EIP712Domain", typedData.Domain.Map())
+	if err != nil {
+		return SignatureResult{}, fmt.Errorf("failed to hash domain: %w", err)
+	}
+
+	typedDataHash, err := typedData.HashStruct(typedData.PrimaryType, typedData.Message)
+	if err != nil {
+		return SignatureResult{}, fmt.Errorf("failed to hash typed data: %w", err)
+	}
+
+	rawData := []byte{0x19, 0x01}
+	rawData = append(rawData, domainSeparator...)
+	rawData = append(rawData, typedDataHash...)
+	msgHash := crypto.Keccak256Hash(rawData)
+
+	signature, err := crypto.Sign(msgHash.Bytes(), privateKey)
+	if err != nil {
+		return SignatureResult{}, fmt.Errorf("failed to sign message: %w", err)
+	}
+
+	// Extract r, s, v components
+	r := new(big.Int).SetBytes(signature[:32])
+	s := new(big.Int).SetBytes(signature[32:64])
+	v := int(signature[64]) + 27
+
+	return SignatureResult{
+		R: hexutil.EncodeBig(r),
+		S: hexutil.EncodeBig(s),
+		V: v,
+	}, nil
+}
+
 // SignL1Action implements the same logic as Python's sign_l1_action
 func SignL1Action(
 	privateKey *ecdsa.PrivateKey,
@@ -119,7 +164,7 @@ func SignL1Action(
 	timestamp int64,
 	expiresAfter *int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	// Step 1: Create action hash
 	hash := actionHash(action, vaultAddress, timestamp, expiresAfter)
 
@@ -130,58 +175,7 @@ func SignL1Action(
 	typedData := l1Payload(phantomAgent)
 
 	// Step 4: Sign using EIP-712
-	domainSeparator, err := typedData.HashStruct("EIP712Domain", typedData.Domain.Map())
-	if err != nil {
-		return "", fmt.Errorf("failed to hash domain: %w", err)
-	}
-	fmt.Printf("go domain separator: %s\n", hex.EncodeToString(domainSeparator))
-
-	typedDataHash, err := typedData.HashStruct(typedData.PrimaryType, typedData.Message)
-	if err != nil {
-		return "", fmt.Errorf("failed to hash typed data: %w", err)
-	}
-	fmt.Printf("go typed data hash: %s\n", hex.EncodeToString(typedDataHash))
-
-	rawData := []byte{0x19, 0x01}
-	rawData = append(rawData, domainSeparator...)
-	rawData = append(rawData, typedDataHash...)
-	msgHash := crypto.Keccak256Hash(rawData)
-
-	signature, err := crypto.Sign(msgHash.Bytes(), privateKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign message: %w", err)
-	}
-
-	// Convert to Ethereum signature format
-	signature[64] += 27
-
-	return hexutil.Encode(signature), nil
-}
-
-func OrderRequestToWire(req OrderRequest, asset int) OrderWire {
-	wire := OrderWire{
-		Asset:      asset,
-		IsBuy:      req.IsBuy,
-		LimitPx:    req.LimitPx,
-		ReduceOnly: req.ReduceOnly,
-		Size:       req.Size,
-	}
-
-	if req.OrderType.Limit != nil {
-		wire.OrderType = "Limit"
-		wire.Tif = req.OrderType.Limit.Tif
-	} else if req.OrderType.Trigger != nil {
-		wire.OrderType = "Trigger"
-		wire.TriggerPx = req.OrderType.Trigger.TriggerPx
-		wire.IsMarket = req.OrderType.Trigger.IsMarket
-		wire.Tpsl = req.OrderType.Trigger.Tpsl
-	}
-
-	if req.Cloid != nil {
-		wire.Cloid = *req.Cloid
-	}
-
-	return wire
+	return signInner(privateKey, typedData)
 }
 
 // SignUsdClassTransferAction signs USD class transfer action
@@ -191,7 +185,7 @@ func SignUsdClassTransferAction(
 	toPerp bool,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":   "usdClassTransfer",
 		"amount": amount,
@@ -208,7 +202,7 @@ func SignSpotTransferAction(
 	destination, token string,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":        "spotTransfer",
 		"amount":      amount,
@@ -226,7 +220,7 @@ func SignUsdTransferAction(
 	destination string,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":        "usdTransfer",
 		"amount":      amount,
@@ -244,7 +238,7 @@ func SignPerpDexClassTransferAction(
 	toPerp bool,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":   "perpDexClassTransfer",
 		"dex":    dex,
@@ -264,7 +258,7 @@ func SignTokenDelegateAction(
 	validatorAddress string,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":             "tokenDelegate",
 		"token":            token,
@@ -282,7 +276,7 @@ func SignWithdrawFromBridgeAction(
 	amount, fee float64,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":        "withdrawFromBridge",
 		"destination": destination,
@@ -299,7 +293,7 @@ func SignAgent(
 	agentAddress, agentName string,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":         "approveAgent",
 		"agentAddress": agentAddress,
@@ -316,7 +310,7 @@ func SignApproveBuilderFee(
 	maxFeeRate float64,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":           "approveBuilderFee",
 		"builderAddress": builderAddress,
@@ -333,7 +327,7 @@ func SignConvertToMultiSigUserAction(
 	threshold int,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":      "convertToMultiSigUser",
 		"signers":   signers,
@@ -351,7 +345,7 @@ func SignMultiSigAction(
 	signatures []string,
 	timestamp int64,
 	isMainnet bool,
-) (string, error) {
+) (SignatureResult, error) {
 	action := map[string]any{
 		"type":       "multiSig",
 		"action":     innerAction,

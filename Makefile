@@ -1,6 +1,7 @@
 GOCMD=go
 GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
+GOINSTALL =$(GOCMD) install
 GOMOD=$(GOCMD) mod
 GOGENERATE=$(GOCMD) generate
 
@@ -67,5 +68,7 @@ mod-verify: ## Verify dependencies
 	$(GOMOD) verify
 
 install-tools: ## Install development tools
-	$(GOGET) github.com/mailru/easyjson/easyjson@latest
-	$(GOGET) github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	$(GOINSTALL) github.com/mailru/easyjson/easyjson@latest
+	$(GOINSTALL) github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	$(GOINSTALL) golang.org/x/tools/cmd/goimports@latest
+	$(GOINSTALL) github.com/segmentio/golines@latest

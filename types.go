@@ -1,7 +1,5 @@
 package hyperliquid
 
-//go:generate easyjson -all types.go
-
 type Side string
 
 const (
@@ -9,9 +7,24 @@ const (
 	SideBid Side = "B"
 )
 
+type Grouping string
+
+const (
+	GroupingNA           Grouping = "na"
+	GroupingNormalTpsl   Grouping = "normalTpsl"
+	GroupingPositionTpls Grouping = "positionTpsl"
+)
+
 // Constants for default values
 const (
 	DefaultSlippage = 0.05 // 5%
+)
+
+// Order Time-in-Force constants
+const (
+	TifAlo = "Alo" // Add Liquidity Only
+	TifIoc = "Ioc" // Immediate or Cancel
+	TifGtc = "Gtc" // Good Till Cancel
 )
 
 type AssetInfo struct {
@@ -66,23 +79,13 @@ type WsMsg struct {
 	Data    map[string]any `json:"data"`
 }
 
-type OrderRequest struct {
-	Coin       string    `json:"coin"`
-	IsBuy      bool      `json:"is_buy"`
-	Size       float64   `json:"sz"`
-	LimitPx    float64   `json:"limit_px"`
-	OrderType  OrderType `json:"order_type"`
-	ReduceOnly bool      `json:"reduce_only"`
-	Cloid      *string   `json:"cloid,omitempty"`
-}
-
 type OrderType struct {
 	Limit   *LimitOrderType   `json:"limit,omitempty"`
 	Trigger *TriggerOrderType `json:"trigger,omitempty"`
 }
 
 type LimitOrderType struct {
-	Tif string `json:"tif"` // "Alo", "Ioc", "Gtc"
+	Tif string `json:"tif"` // TifAlo, TifIoc, TifGtc
 }
 
 type TriggerOrderType struct {
@@ -108,11 +111,6 @@ type OrderWire struct {
 	Tpsl       string  `json:"tpsl,omitempty"`
 	Tif        string  `json:"tif,omitempty"`
 	Cloid      string  `json:"c,omitempty"`
-}
-
-type ModifyRequest struct {
-	Oid   any          `json:"oid"` // can be int64 or Cloid
-	Order OrderRequest `json:"order"`
 }
 
 type CancelRequest struct {
@@ -326,18 +324,6 @@ type Trade struct {
 	Hash  string   `json:"hash"`
 	Tid   int64    `json:"tid"`
 	Users []string `json:"users"`
-}
-
-type OrderStatus struct {
-	Order  *OpenOrder `json:"order"`
-	Status string     `json:"status"`
-}
-
-// Response types for exchange operations
-type OrderResponse struct {
-	Status string       `json:"status"`
-	Data   *OrderStatus `json:"data,omitempty"`
-	Error  string       `json:"error,omitempty"`
 }
 
 type BulkOrderResponse struct {

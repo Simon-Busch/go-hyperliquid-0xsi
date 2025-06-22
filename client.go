@@ -39,6 +39,7 @@ func NewClient(baseURL string) *Client {
 
 func (c *Client) post(path string, payload any) ([]byte, error) {
 	jsonData, err := json.Marshal(payload)
+	fmt.Println(string(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}

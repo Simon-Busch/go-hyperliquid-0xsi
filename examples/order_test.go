@@ -3,41 +3,42 @@ package examples
 import (
 	"testing"
 
+	"github.com/joho/godotenv"
 	"github.com/sonirico/go-hyperliquid"
 )
 
 func TestOrder(t *testing.T) {
-	skipIfNoPrivateKey(t)
-	exchange := getTestExchange(t)
+	godotenv.Overload()
+	exchange := newTestExchange(t)
 
 	tests := []struct {
 		name string
-		req  hyperliquid.OrderRequest
+		req  hyperliquid.CreateOrderRequest
 	}{
 		{
 			name: "limit buy order",
-			req: hyperliquid.OrderRequest{
-				Coin:    "BTC",
-				IsBuy:   true,
-				Size:    0.001, // Smaller size for testing
-				LimitPx: 40000.0,
+			req: hyperliquid.CreateOrderRequest{
+				Coin:  "BTC",
+				IsBuy: true,
+				Size:  0.001, // Smaller size for testing
+				Price: 40000.0,
 				OrderType: hyperliquid.OrderType{
 					Limit: &hyperliquid.LimitOrderType{
-						Tif: "Gtc",
+						Tif: hyperliquid.TifGtc,
 					},
 				},
 			},
 		},
 		{
 			name: "market sell order",
-			req: hyperliquid.OrderRequest{
-				Coin:    "ETH",
-				IsBuy:   false,
-				Size:    0.01,
-				LimitPx: 2000.0,
+			req: hyperliquid.CreateOrderRequest{
+				Coin:  "ETH",
+				IsBuy: false,
+				Size:  0.01,
+				Price: 2000.0,
 				OrderType: hyperliquid.OrderType{
 					Limit: &hyperliquid.LimitOrderType{
-						Tif: "Ioc",
+						Tif: hyperliquid.TifIoc,
 					},
 				},
 			},
@@ -56,91 +57,98 @@ func TestOrder(t *testing.T) {
 }
 
 func TestMarketOpen(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
+	godotenv.Overload()
+	exchange := newTestExchange(t) // exchange used for setup only
 
 	t.Log("Market open method is available and ready to use")
 
 	// Example usage:
-	// name := "BTC"
-	// isBuy := true
-	// sz := 0.001
-	// slippage := 0.01 // 1%
-	//
-	// result, err := exchange.MarketOpen(name, isBuy, sz, nil, slippage, nil, nil)
-	// if err != nil {
-	// 	t.Fatalf("MarketOpen failed: %v", err)
-	// }
-	//
-	// t.Logf("Market open result: %+v", result)
+	name := "BTC"
+	isBuy := true
+	sz := 0.001
+	slippage := 0.01 // 1%
+
+	result, err := exchange.MarketOpen(name, isBuy, sz, nil, slippage, nil, nil)
+	if err != nil {
+		t.Fatalf("MarketOpen failed: %v", err)
+	}
+
+	t.Logf("Market open result: %+v", result)
 }
 
 func TestMarketClose(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
-
+	godotenv.Overload()
+	exchange := newTestExchange(t)
 	t.Log("Market close method is available and ready to use")
 
 	// Example usage:
-	// coin := "BTC"
-	// slippage := 0.01 // 1%
-	//
-	// result, err := exchange.MarketClose(coin, nil, nil, slippage, nil, nil)
-	// if err != nil {
-	// 	t.Fatalf("MarketClose failed: %v", err)
-	// }
-	//
-	// t.Logf("Market close result: %+v", result)
+	coin := "BTC"
+	slippage := 0.01 // 1%
+
+	result, err := exchange.MarketClose(coin, nil, nil, slippage, nil, nil)
+	if err != nil {
+		t.Fatalf("MarketClose failed: %v", err)
+	}
+
+	t.Logf("Market close result: %+v", result)
 }
 
 func TestModifyOrder(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
+	godotenv.Overload()
+	exchange := newTestExchange(t)
 
 	t.Log("Modify order method is available and ready to use")
 
 	// Example usage:
-	// oid := int64(12345)
-	// name := "BTC"
-	// isBuy := true
-	// sz := 0.002
-	// limitPx := 41000.0
-	// orderType := hyperliquid.OrderType{
-	// 	Limit: &hyperliquid.LimitOrderType{Tif: "Gtc"},
-	// }
-	// reduceOnly := false
-	// cloid := "modified_order_123"
-	//
-	// result, err := exchange.ModifyOrder(oid, name, isBuy, sz, limitPx, orderType, reduceOnly, &cloid)
-	// if err != nil {
-	// 	t.Fatalf("ModifyOrder failed: %v", err)
-	// }
-	//
-	// t.Logf("Modify order result: %+v", result)
+	modifyReq := hyperliquid.ModifyOrderRequest{
+		Oid: int64(12345),
+		Order: hyperliquid.CreateOrderRequest{
+			Coin:  "BTC",
+			IsBuy: true,
+			Size:  0.002,
+			Price: 41000.0,
+			OrderType: hyperliquid.OrderType{
+				Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+			},
+			ReduceOnly:    false,
+			ClientOrderID: func() *string { s := "modified_order_123"; return &s }(),
+		},
+	}
+
+	result, err := exchange.ModifyOrder(modifyReq)
+	if err != nil {
+		t.Fatalf("ModifyOrder failed: %v", err)
+	}
+
+	t.Logf("Modify order result: %+v", result)
 }
 
 func TestBulkModifyOrders(t *testing.T) {
-	_ = getTestExchange(t) // exchange used for setup only
+	godotenv.Overload()
+	exchange := newTestExchange(t)
 
 	t.Log("Bulk modify orders method is available and ready to use")
 
 	// Example usage:
-	// modifyRequests := []hyperliquid.ModifyRequest{
-	// 	{
-	// 		Oid: int64(12345),
-	// 		Order: hyperliquid.OrderRequest{
-	// 			Coin:    "BTC",
-	// 			IsBuy:   true,
-	// 			Size:    0.002,
-	// 			LimitPx: 41000.0,
-	// 			OrderType: hyperliquid.OrderType{
-	// 				Limit: &hyperliquid.LimitOrderType{Tif: "Gtc"},
-	// 			},
-	// 		},
-	// 	},
-	// }
-	//
-	// result, err := exchange.BulkModifyOrders(modifyRequests)
-	// if err != nil {
-	// 	t.Fatalf("BulkModifyOrders failed: %v", err)
-	// }
-	//
-	// t.Logf("Bulk modify orders result: %+v", result)
+	modifyRequests := []hyperliquid.ModifyOrderRequest{
+		{
+			Oid: int64(12345),
+			Order: hyperliquid.CreateOrderRequest{
+				Coin:  "BTC",
+				IsBuy: true,
+				Size:  0.002,
+				Price: 41000.0,
+				OrderType: hyperliquid.OrderType{
+					Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifGtc},
+				},
+			},
+		},
+	}
+
+	result, err := exchange.BulkModifyOrders(modifyRequests)
+	if err != nil {
+		t.Fatalf("BulkModifyOrders failed: %v", err)
+	}
+
+	t.Logf("Bulk modify orders result: %+v", result)
 }

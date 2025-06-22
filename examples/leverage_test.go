@@ -5,7 +5,7 @@ import (
 )
 
 func TestUpdateLeverage(t *testing.T) {
-	exchange := getTestExchange(t)
+	exchange := newTestExchange(t)
 
 	leverage := 5 // 5x leverage
 	name := "BTC"
@@ -20,7 +20,7 @@ func TestUpdateLeverage(t *testing.T) {
 }
 
 func TestUpdateIsolatedMargin(t *testing.T) {
-	exchange := getTestExchange(t)
+	exchange := newTestExchange(t)
 
 	amount := 1000.0 // Amount in USD
 	name := "BTC"
