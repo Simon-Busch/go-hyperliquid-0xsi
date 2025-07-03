@@ -130,5 +130,6 @@ func (ma *MixedArray) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	*ma = rawArr
 	return nil
 }

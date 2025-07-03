@@ -2,37 +2,7 @@ package hyperliquid
 
 import (
 	"fmt"
-	"math"
-	"strconv"
-	"strings"
 )
-
-// floatToWire converts a float64 to a wire-compatible string format
-func floatToWire(x float64) (string, error) {
-	// Format to 8 decimal places
-	rounded := fmt.Sprintf("%.8f", x)
-
-	// Check if rounding causes significant error
-	parsed, err := strconv.ParseFloat(rounded, 64)
-	if err != nil {
-		return "", err
-	}
-
-	if math.Abs(parsed-x) >= 1e-12 {
-		return "", fmt.Errorf("float_to_wire causes rounding: %f", x)
-	}
-
-	// Handle -0 case
-	if rounded == "-0.00000000" {
-		rounded = "0.00000000"
-	}
-
-	// Remove trailing zeros and decimal point if not needed
-	result := strings.TrimRight(rounded, "0")
-	result = strings.TrimRight(result, ".")
-
-	return result, nil
-}
 
 type CreateOrderRequest struct {
 	Coin          string
@@ -157,54 +127,6 @@ func (e *Exchange) BulkOrders(
 		return nil, err
 	}
 	err = e.executeAction(action, &result)
-	return
-}
-
-type cancelOrderItem struct {
-	Asset   int    `json:"a"`
-	OrderID string `json:"o"`
-}
-
-type CancelOrderResponse struct {
-	Statuses MixedArray
-}
-
-func (e *Exchange) Cancel(coin string, oid int64) (res *APIResponse[CancelResponse], err error) {
-	action := map[string]any{
-		"type": "cancel",
-		"cancels": []cancelOrderItem{
-			{
-				Asset:   e.info.NameToAsset(coin),
-				OrderID: strconv.FormatInt(oid, 10),
-			},
-		},
-	}
-
-	if err = e.executeAction(action, &res); err != nil {
-		return
-	}
-	return
-}
-
-type cancelOrderItemByCloid struct {
-	Asset   int    `json:"a"`
-	OrderID string `json:"cloid"`
-}
-
-func (e *Exchange) CancelByCloid(coin, cloid string) (res *APIResponse[CancelResponse], err error) {
-	action := map[string]any{
-		"type": "cancelByCloid",
-		"cancels": []cancelOrderItemByCloid{
-			{
-				Asset:   e.info.NameToAsset(coin),
-				OrderID: cloid,
-			},
-		},
-	}
-
-	if err = e.executeAction(action, &res); err != nil {
-		return
-	}
 	return
 }
 
