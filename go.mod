@@ -7,7 +7,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/mailru/easyjson v0.9.0
-	github.com/sonirico/vago v0.6.1
+	github.com/sonirico/vago v0.7.3
 	github.com/stretchr/testify v1.10.0
 	github.com/valyala/fastjson v1.6.4
 	github.com/vmihailenco/msgpack/v5 v5.4.1
