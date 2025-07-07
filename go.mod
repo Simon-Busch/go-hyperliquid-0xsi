@@ -3,7 +3,7 @@ module github.com/sonirico/go-hyperliquid
 go 1.23.0
 
 require (
-	github.com/ethereum/go-ethereum v1.16.0
+	github.com/ethereum/go-ethereum v1.16.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/mailru/easyjson v0.9.0
