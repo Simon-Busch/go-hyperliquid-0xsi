@@ -375,6 +375,8 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 		return msg.Channel == "l2Book"
 	case "trades":
 		return msg.Channel == "trades"
+	case "candle":
+		return msg.Channel == "candle"
 	default:
 		return false
 	}
