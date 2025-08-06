@@ -17,7 +17,10 @@ type (
 	}
 )
 
-func (e *Exchange) Cancel(coin string, oid int64) (res *APIResponse[CancelOrderResponse], err error) {
+func (e *Exchange) Cancel(
+	coin string,
+	oid int64,
+) (res *APIResponse[CancelOrderResponse], err error) {
 	return e.BulkCancel([]CancelOrderRequest{
 		{
 			Coin:    coin,
@@ -26,20 +29,19 @@ func (e *Exchange) Cancel(coin string, oid int64) (res *APIResponse[CancelOrderR
 	})
 }
 
-func (e *Exchange) BulkCancel(requests []CancelOrderRequest) (res *APIResponse[CancelOrderResponse], err error) {
-	type cancelOrderItem struct {
-		Asset   int    `json:"a"`
-		OrderID string `json:"o"`
-	}
+func (e *Exchange) BulkCancel(
+	requests []CancelOrderRequest,
+) (res *APIResponse[CancelOrderResponse], err error) {
+	cancels := slices.Map(requests, func(req CancelOrderRequest) CancelOrderWire {
+		return CancelOrderWire{
+			Asset:   e.info.NameToAsset(req.Coin),
+			OrderID: strconv.FormatInt(req.OrderID, 10),
+		}
+	})
 
-	action := map[string]any{
-		"type": "cancel",
-		"cancels": slices.Map(requests, func(req CancelOrderRequest) cancelOrderItem {
-			return cancelOrderItem{
-				Asset:   e.info.NameToAsset(req.Coin),
-				OrderID: strconv.FormatInt(req.OrderID, 10),
-			}
-		}),
+	action := CancelAction{
+		Type:    "cancel",
+		Cancels: cancels,
 	}
 
 	if err = e.executeAction(action, &res); err != nil {
@@ -53,7 +55,9 @@ type CancelOrderRequestByCloid struct {
 	Cloid string
 }
 
-func (e *Exchange) CancelByCloid(coin, cloid string) (res *APIResponse[CancelOrderResponse], err error) {
+func (e *Exchange) CancelByCloid(
+	coin, cloid string,
+) (res *APIResponse[CancelOrderResponse], err error) {
 	return e.BulkCancelByCloids([]CancelOrderRequestByCloid{
 		{
 			Coin:  coin,
@@ -62,20 +66,19 @@ func (e *Exchange) CancelByCloid(coin, cloid string) (res *APIResponse[CancelOrd
 	})
 }
 
-func (e *Exchange) BulkCancelByCloids(requests []CancelOrderRequestByCloid) (res *APIResponse[CancelOrderResponse], err error) {
-	type cancelOrderItemByCloid struct {
-		Asset   int    `json:"a"`
-		OrderID string `json:"cloid"`
-	}
+func (e *Exchange) BulkCancelByCloids(
+	requests []CancelOrderRequestByCloid,
+) (res *APIResponse[CancelOrderResponse], err error) {
+	cancels := slices.Map(requests, func(req CancelOrderRequestByCloid) CancelByCloidWire {
+		return CancelByCloidWire{
+			Asset:   e.info.NameToAsset(req.Coin),
+			OrderID: req.Cloid,
+		}
+	})
 
-	action := map[string]any{
-		"type": "cancelByCloid",
-		"cancels": slices.Map(requests, func(req CancelOrderRequestByCloid) cancelOrderItemByCloid {
-			return cancelOrderItemByCloid{
-				Asset:   e.info.NameToAsset(req.Coin),
-				OrderID: req.Cloid,
-			}
-		}),
+	action := CancelByCloidAction{
+		Type:    "cancelByCloid",
+		Cancels: cancels,
 	}
 
 	if err = e.executeAction(action, &res); err != nil {

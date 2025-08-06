@@ -10,7 +10,7 @@ import (
 
 // Pool of parsers to avoid allocations
 var parserPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &fastjson.Parser{}
 	},
 }

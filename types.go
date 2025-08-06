@@ -99,20 +99,6 @@ type BuilderInfo struct {
 	Fee     int    `json:"f"`
 }
 
-type OrderWire struct {
-	Asset      int     `json:"a"`
-	IsBuy      bool    `json:"b"`
-	OrderType  string  `json:"t,omitempty"`
-	LimitPx    float64 `json:"p"`
-	Size       float64 `json:"s"`
-	ReduceOnly bool    `json:"r"`
-	TriggerPx  float64 `json:"tp,omitempty"`
-	IsMarket   bool    `json:"im,omitempty"`
-	Tpsl       string  `json:"tpsl,omitempty"`
-	Tif        string  `json:"tif,omitempty"`
-	Cloid      string  `json:"c,omitempty"`
-}
-
 type CancelRequest struct {
 	Coin string `json:"coin"`
 	Oid  int64  `json:"oid"`
@@ -121,11 +107,6 @@ type CancelRequest struct {
 type CancelByCloidRequest struct {
 	Coin  string `json:"coin"`
 	Cloid string `json:"cloid"`
-}
-
-type ScheduleCancelAction struct {
-	Type string `json:"type"`
-	Time *int64 `json:"time,omitempty"`
 }
 
 type Cloid struct {

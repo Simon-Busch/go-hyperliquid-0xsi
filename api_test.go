@@ -241,9 +241,13 @@ func TestMixedValue_Array(t *testing.T) {
 		wantOk bool
 	}{
 		{
-			name:   "valid array",
-			mv:     MixedValue(`[1,"hello",true]`),
-			want:   []json.RawMessage{json.RawMessage("1"), json.RawMessage(`"hello"`), json.RawMessage("true")},
+			name: "valid array",
+			mv:   MixedValue(`[1,"hello",true]`),
+			want: []json.RawMessage{
+				json.RawMessage("1"),
+				json.RawMessage(`"hello"`),
+				json.RawMessage("true"),
+			},
 			wantOk: true,
 		},
 		{
@@ -253,9 +257,12 @@ func TestMixedValue_Array(t *testing.T) {
 			wantOk: true,
 		},
 		{
-			name:   "array with objects",
-			mv:     MixedValue(`[{"key":"value"},{"num":42}]`),
-			want:   []json.RawMessage{json.RawMessage(`{"key":"value"}`), json.RawMessage(`{"num":42}`)},
+			name: "array with objects",
+			mv:   MixedValue(`[{"key":"value"},{"num":42}]`),
+			want: []json.RawMessage{
+				json.RawMessage(`{"key":"value"}`),
+				json.RawMessage(`{"num":42}`),
+			},
 			wantOk: true,
 		},
 		{
@@ -618,12 +625,12 @@ func TestMixedValue_IntegrationWithComplexData(t *testing.T) {
 
 	// Test parsing to a struct
 	type ComplexStruct struct {
-		StringField  string                 `json:"string_field"`
-		NumberField  int                    `json:"number_field"`
-		BooleanField bool                   `json:"boolean_field"`
-		NullField    *string                `json:"null_field"`
-		ObjectField  map[string]interface{} `json:"object_field"`
-		ArrayField   []interface{}          `json:"array_field"`
+		StringField  string         `json:"string_field"`
+		NumberField  int            `json:"number_field"`
+		BooleanField bool           `json:"boolean_field"`
+		NullField    *string        `json:"null_field"`
+		ObjectField  map[string]any `json:"object_field"`
+		ArrayField   []any          `json:"array_field"`
 	}
 
 	var result ComplexStruct
@@ -634,7 +641,7 @@ func TestMixedValue_IntegrationWithComplexData(t *testing.T) {
 	assert.Equal(t, 42, result.NumberField)
 	assert.Equal(t, true, result.BooleanField)
 	assert.Nil(t, result.NullField)
-	assert.Equal(t, map[string]interface{}{"nested": "value"}, result.ObjectField)
+	assert.Equal(t, map[string]any{"nested": "value"}, result.ObjectField)
 	assert.Len(t, result.ArrayField, 5)
 
 	// Test round-trip marshaling

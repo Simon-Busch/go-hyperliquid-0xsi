@@ -269,17 +269,21 @@ func TestSignL1Action(t *testing.T) {
 // TestDebugActionHash helps debug the action hash generation
 func TestDebugActionHash(t *testing.T) {
 	// Use the same test data as Python
-	action := map[string]any{
-		"type": "order",
-		"orders": []OrderWire{{
-			Asset:     0,
-			IsBuy:     true,
-			LimitPx:   100.5,
-			Size:      1.0,
-			OrderType: "Limit",
-			Tif:       TifGtc,
+	action := OrderAction{
+		Type: "order",
+		Orders: []OrderWire{{
+			Asset:      0,
+			IsBuy:      true,
+			LimitPx:    "100.5",
+			Size:       "1.0",
+			ReduceOnly: false,
+			OrderType: map[string]any{
+				"limit": map[string]any{
+					"tif": "Gtc",
+				},
+			},
 		}},
-		"grouping": GroupingNA,
+		Grouping: "na",
 	}
 
 	privateKey, _ := crypto.HexToECDSA(

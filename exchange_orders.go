@@ -46,50 +46,54 @@ type OrderResponse struct {
 	Statuses []OrderStatus
 }
 
-func newOrderRequest(e *Exchange, p CreateOrderRequest) (createOrderRequest, error) {
-	priceWire, err := floatToWire(p.Price)
-	if err != nil {
-		return createOrderRequest{}, fmt.Errorf("failed to wire price: %w", err)
-	}
-
-	sizeWire, err := floatToWire(p.Size)
-	if err != nil {
-		return createOrderRequest{}, fmt.Errorf("failed to wire size: %w", err)
-	}
-
-	return createOrderRequest{
-		Asset:         e.info.NameToAsset(p.Coin),
-		IsBuy:         p.IsBuy,
-		Price:         priceWire,
-		Size:          sizeWire,
-		ReduceOnly:    p.ReduceOnly,
-		OrderType:     p.OrderType,
-		ClientOrderID: p.ClientOrderID,
-	}, nil
-}
-
 func newCreateOrderAction(
 	e *Exchange,
 	orders []CreateOrderRequest,
 	info *BuilderInfo,
-) (map[string]any, error) {
-	orderRequests := make([]createOrderRequest, len(orders))
+) (OrderAction, error) {
+	orderRequests := make([]OrderWire, len(orders))
 	for i, order := range orders {
-		req, err := newOrderRequest(e, order)
+		priceWire, err := floatToWire(order.Price)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create order request %d: %w", i, err)
+			return OrderAction{}, fmt.Errorf("failed to wire price for order %d: %w", i, err)
 		}
-		orderRequests[i] = req
+
+		sizeWire, err := floatToWire(order.Size)
+		if err != nil {
+			return OrderAction{}, fmt.Errorf("failed to wire size for order %d: %w", i, err)
+		}
+
+		// Build order type map with proper field ordering
+		orderTypeMap := make(map[string]any)
+		if order.OrderType.Limit != nil {
+			orderTypeMap["limit"] = map[string]any{
+				"tif": order.OrderType.Limit.Tif,
+			}
+		} else if order.OrderType.Trigger != nil {
+			orderTypeMap["trigger"] = map[string]any{
+				"triggerPx": order.OrderType.Trigger.TriggerPx,
+				"isMarket":  order.OrderType.Trigger.IsMarket,
+				"tpsl":      order.OrderType.Trigger.Tpsl,
+			}
+		}
+
+		orderWire := OrderWire{
+			Asset:      e.info.NameToAsset(order.Coin),
+			IsBuy:      order.IsBuy,
+			LimitPx:    priceWire,
+			Size:       sizeWire,
+			ReduceOnly: order.ReduceOnly,
+			OrderType:  orderTypeMap,
+			Cloid:      order.ClientOrderID,
+		}
+		orderRequests[i] = orderWire
 	}
 
-	res := map[string]any{
-		"type":     "order",
-		"orders":   orderRequests,
-		"grouping": GroupingNA,
-	}
-
-	if info != nil {
-		res["builder"] = *info
+	res := OrderAction{
+		Type:     "order",
+		Orders:   orderRequests,
+		Grouping: string(GroupingNA),
+		Builder:  info,
 	}
 
 	return res, nil
@@ -135,41 +139,45 @@ type ModifyOrderRequest struct {
 	Order CreateOrderRequest
 }
 
-type modifyOrderRequest struct {
-	Asset         int       `json:"a"`
-	IsBuy         bool      `json:"b"`
-	Price         string    `json:"p"`
-	Size          string    `json:"s"`
-	ReduceOnly    bool      `json:"r"`
-	OrderType     OrderType `json:"t"`
-	ClientOrderID *string   `json:"c,omitempty"`
-}
-
 func newModifyOrderAction(
 	e *Exchange,
 	modifyRequest ModifyOrderRequest,
-) (map[string]any, error) {
+) (ModifyAction, error) {
 	priceWire, err := floatToWire(modifyRequest.Order.Price)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wire price: %w", err)
+		return ModifyAction{}, fmt.Errorf("failed to wire price: %w", err)
 	}
 
 	sizeWire, err := floatToWire(modifyRequest.Order.Size)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wire size: %w", err)
+		return ModifyAction{}, fmt.Errorf("failed to wire size: %w", err)
 	}
 
-	return map[string]any{
-		"type": "modify",
-		"oid":  modifyRequest.Oid,
-		"order": modifyOrderRequest{
-			Asset:         e.info.NameToAsset(modifyRequest.Order.Coin),
-			IsBuy:         modifyRequest.Order.IsBuy,
-			Price:         priceWire,
-			Size:          sizeWire,
-			ReduceOnly:    modifyRequest.Order.ReduceOnly,
-			OrderType:     modifyRequest.Order.OrderType,
-			ClientOrderID: modifyRequest.Order.ClientOrderID,
+	// Build order type map with proper field ordering
+	orderTypeMap := make(map[string]any)
+	if modifyRequest.Order.OrderType.Limit != nil {
+		orderTypeMap["limit"] = map[string]any{
+			"tif": modifyRequest.Order.OrderType.Limit.Tif,
+		}
+	} else if modifyRequest.Order.OrderType.Trigger != nil {
+		orderTypeMap["trigger"] = map[string]any{
+			"triggerPx": modifyRequest.Order.OrderType.Trigger.TriggerPx,
+			"isMarket":  modifyRequest.Order.OrderType.Trigger.IsMarket,
+			"tpsl":      modifyRequest.Order.OrderType.Trigger.Tpsl,
+		}
+	}
+
+	return ModifyAction{
+		Type: "modify",
+		Oid:  modifyRequest.Oid,
+		Order: OrderWire{
+			Asset:      e.info.NameToAsset(modifyRequest.Order.Coin),
+			IsBuy:      modifyRequest.Order.IsBuy,
+			LimitPx:    priceWire,
+			Size:       sizeWire,
+			ReduceOnly: modifyRequest.Order.ReduceOnly,
+			OrderType:  orderTypeMap,
+			Cloid:      modifyRequest.Order.ClientOrderID,
 		},
 	}, nil
 }
@@ -177,19 +185,19 @@ func newModifyOrderAction(
 func newModifyOrdersAction(
 	e *Exchange,
 	modifyRequests []ModifyOrderRequest,
-) (map[string]any, error) {
-	modifies := make([]map[string]any, len(modifyRequests))
+) (BatchModifyAction, error) {
+	modifies := make([]ModifyAction, len(modifyRequests))
 	for i, req := range modifyRequests {
 		modify, err := newModifyOrderAction(e, req)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create modify request %d: %w", i, err)
+			return BatchModifyAction{}, fmt.Errorf("failed to create modify request %d: %w", i, err)
 		}
 		modifies[i] = modify
 	}
 
-	return map[string]any{
-		"type":     "batchModify",
-		"modifies": modifies,
+	return BatchModifyAction{
+		Type:     "batchModify",
+		Modifies: modifies,
 	}, nil
 }
 

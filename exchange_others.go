@@ -17,10 +17,10 @@ func (e *Exchange) UpdateLeverage(leverage int, name string, isCross bool) (*Use
 		leverageType = "cross"
 	}
 
-	action := map[string]any{
-		"type":  "updateLeverage",
-		"asset": e.info.NameToAsset(name),
-		"leverage": map[string]any{
+	action := UpdateLeverageAction{
+		Type:  "updateLeverage",
+		Asset: e.info.NameToAsset(name),
+		Leverage: map[string]any{
 			"type":  leverageType,
 			"value": leverage,
 		},
@@ -34,11 +34,11 @@ func (e *Exchange) UpdateLeverage(leverage int, name string, isCross bool) (*Use
 }
 
 func (e *Exchange) UpdateIsolatedMargin(amount float64, name string) (*UserState, error) {
-	action := map[string]any{
-		"type":  "updateIsolatedMargin",
-		"asset": e.info.NameToAsset(name),
-		"isBuy": amount > 0,
-		"ntli":  abs(amount),
+	action := UpdateIsolatedMarginAction{
+		Type:  "updateIsolatedMargin",
+		Asset: e.info.NameToAsset(name),
+		IsBuy: amount > 0,
+		Ntli:  abs(amount),
 	}
 
 	var result UserState
@@ -104,11 +104,9 @@ func (e *Exchange) SlippagePrice(
 func (e *Exchange) ScheduleCancel(scheduleTime *int64) (*ScheduleCancelResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type": "scheduleCancel",
-	}
-	if scheduleTime != nil {
-		action["time"] = *scheduleTime
+	action := ScheduleCancelAction{
+		Type: "scheduleCancel",
+		Time: scheduleTime,
 	}
 
 	sig, err := SignL1Action(
@@ -139,9 +137,9 @@ func (e *Exchange) ScheduleCancel(scheduleTime *int64) (*ScheduleCancelResponse,
 func (e *Exchange) SetReferrer(code string) (*SetReferrerResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type": "setReferrer",
-		"code": code,
+	action := SetReferrerAction{
+		Type: "setReferrer",
+		Code: code,
 	}
 
 	sig, err := SignL1Action(
@@ -172,9 +170,9 @@ func (e *Exchange) SetReferrer(code string) (*SetReferrerResponse, error) {
 func (e *Exchange) CreateSubAccount(name string) (*CreateSubAccountResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type": "createSubAccount",
-		"name": name,
+	action := CreateSubAccountAction{
+		Type: "createSubAccount",
+		Name: name,
 	}
 
 	sig, err := SignL1Action(
@@ -210,11 +208,11 @@ func (e *Exchange) UsdClassTransfer(amount float64, toPerp bool) (*TransferRespo
 		strAmount += " subaccount:" + e.vault
 	}
 
-	action := map[string]any{
-		"type":   "usdClassTransfer",
-		"amount": strAmount,
-		"toPerp": toPerp,
-		"nonce":  timestamp,
+	action := UsdClassTransferAction{
+		Type:   "usdClassTransfer",
+		Amount: strAmount,
+		ToPerp: toPerp,
+		Nonce:  timestamp,
 	}
 
 	sig, err := SignL1Action(
@@ -249,11 +247,11 @@ func (e *Exchange) SubAccountTransfer(
 ) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":           "subAccountTransfer",
-		"subAccountUser": subAccountUser,
-		"isDeposit":      isDeposit,
-		"usd":            usd,
+	action := SubAccountTransferAction{
+		Type:           "subAccountTransfer",
+		SubAccountUser: subAccountUser,
+		IsDeposit:      isDeposit,
+		Usd:            usd,
 	}
 
 	sig, err := SignL1Action(
@@ -288,11 +286,11 @@ func (e *Exchange) VaultUsdTransfer(
 ) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":         "vaultTransfer",
-		"vaultAddress": vaultAddress,
-		"isDeposit":    isDeposit,
-		"usd":          usd,
+	action := VaultUsdTransferAction{
+		Type:         "vaultTransfer",
+		VaultAddress: vaultAddress,
+		IsDeposit:    isDeposit,
+		Usd:          usd,
 	}
 
 	sig, err := SignL1Action(
@@ -323,11 +321,11 @@ func (e *Exchange) VaultUsdTransfer(
 func (e *Exchange) UsdTransfer(amount float64, destination string) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"destination": destination,
-		"amount":      formatFloat(amount),
-		"time":        timestamp,
-		"type":        "usdSend",
+	action := UsdTransferAction{
+		Type:        "usdSend",
+		Destination: destination,
+		Amount:      formatFloat(amount),
+		Time:        timestamp,
 	}
 
 	sig, err := SignL1Action(
@@ -361,12 +359,12 @@ func (e *Exchange) SpotTransfer(
 ) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"destination": destination,
-		"amount":      formatFloat(amount),
-		"token":       token,
-		"time":        timestamp,
-		"type":        "spotSend",
+	action := SpotTransferAction{
+		Type:        "spotSend",
+		Destination: destination,
+		Amount:      formatFloat(amount),
+		Token:       token,
+		Time:        timestamp,
 	}
 
 	sig, err := SignL1Action(
@@ -397,9 +395,9 @@ func (e *Exchange) SpotTransfer(
 func (e *Exchange) UseBigBlocks(enable bool) (*ApprovalResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":           "evmUserModify",
-		"usingBigBlocks": enable,
+	action := UseBigBlocksAction{
+		Type:           "evmUserModify",
+		UsingBigBlocks: enable,
 	}
 
 	sig, err := SignL1Action(
@@ -434,12 +432,12 @@ func (e *Exchange) PerpDexClassTransfer(
 ) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":   "perpDexClassTransfer",
-		"dex":    dex,
-		"token":  token,
-		"amount": amount,
-		"toPerp": toPerp,
+	action := PerpDexClassTransferAction{
+		Type:   "perpDexClassTransfer",
+		Dex:    dex,
+		Token:  token,
+		Amount: amount,
+		ToPerp: toPerp,
 	}
 
 	sig, err := SignL1Action(
@@ -475,12 +473,12 @@ func (e *Exchange) SubAccountSpotTransfer(
 ) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":           "subAccountSpotTransfer",
-		"subAccountUser": subAccountUser,
-		"isDeposit":      isDeposit,
-		"token":          token,
-		"amount":         amount,
+	action := SubAccountSpotTransferAction{
+		Type:           "subAccountSpotTransfer",
+		SubAccountUser: subAccountUser,
+		IsDeposit:      isDeposit,
+		Token:          token,
+		Amount:         amount,
 	}
 
 	sig, err := SignL1Action(
@@ -515,12 +513,12 @@ func (e *Exchange) TokenDelegate(
 ) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":         "tokenDelegate",
-		"validator":    validator,
-		"wei":          wei,
-		"isUndelegate": isUndelegate,
-		"nonce":        timestamp,
+	action := TokenDelegateAction{
+		Type:         "tokenDelegate",
+		Validator:    validator,
+		Wei:          wei,
+		IsUndelegate: isUndelegate,
+		Nonce:        timestamp,
 	}
 
 	sig, err := SignL1Action(
@@ -554,11 +552,11 @@ func (e *Exchange) WithdrawFromBridge(
 ) (*TransferResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":        "withdraw3",
-		"destination": destination,
-		"amount":      fmt.Sprintf("%.6f", amount),
-		"time":        timestamp,
+	action := WithdrawFromBridgeAction{
+		Type:        "withdraw3",
+		Destination: destination,
+		Amount:      fmt.Sprintf("%.6f", amount),
+		Time:        timestamp,
 	}
 
 	sig, err := SignL1Action(
@@ -603,14 +601,11 @@ func (e *Exchange) ApproveAgent(name *string) (*AgentApprovalResponse, string, e
 	agentAddress := crypto.PubkeyToAddress(privateKey.PublicKey).Hex()
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":         "approveAgent",
-		"agentAddress": agentAddress,
-		"nonce":        timestamp,
-	}
-
-	if name != nil {
-		action["agentName"] = *name
+	action := ApproveAgentAction{
+		Type:         "approveAgent",
+		AgentAddress: agentAddress,
+		AgentName:    name,
+		Nonce:        timestamp,
 	}
 
 	sig, err := SignL1Action(
@@ -641,11 +636,11 @@ func (e *Exchange) ApproveAgent(name *string) (*AgentApprovalResponse, string, e
 func (e *Exchange) ApproveBuilderFee(builder string, maxFeeRate string) (*ApprovalResponse, error) {
 	timestamp := time.Now().UnixMilli()
 
-	action := map[string]any{
-		"type":       "approveBuilderFee",
-		"builder":    builder,
-		"maxFeeRate": maxFeeRate,
-		"nonce":      timestamp,
+	action := ApproveBuilderFeeAction{
+		Type:       "approveBuilderFee",
+		Builder:    builder,
+		MaxFeeRate: maxFeeRate,
+		Nonce:      timestamp,
 	}
 
 	sig, err := SignL1Action(
@@ -692,10 +687,10 @@ func (e *Exchange) ConvertToMultiSigUser(
 		return nil, fmt.Errorf("failed to marshal signers: %w", err)
 	}
 
-	action := map[string]any{
-		"type":    "convertToMultiSigUser",
-		"signers": string(signersJSON),
-		"nonce":   timestamp,
+	action := ConvertToMultiSigUserAction{
+		Type:    "convertToMultiSigUser",
+		Signers: string(signersJSON),
+		Nonce:   timestamp,
 	}
 
 	sig, err := SignL1Action(
