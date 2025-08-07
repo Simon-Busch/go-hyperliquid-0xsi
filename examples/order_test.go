@@ -1,7 +1,6 @@
 package examples
 
 import (
-	"log"
 	"testing"
 
 	"github.com/joho/godotenv"
@@ -57,6 +56,46 @@ func TestOrder(t *testing.T) {
 	}
 }
 
+func TestMarketOrder(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	t.Log("Market order method is available and ready to use")
+
+	// Example usage with MarketOrder helper function:
+	req := hyperliquid.CreateOrderRequest{
+		Coin:  "BTC",
+		IsBuy: true,
+		Size:  0.001,
+		// Price will be set automatically by MarketOrder
+		OrderType: hyperliquid.OrderType{
+			Market: &hyperliquid.MarketOrderType{},
+		},
+	}
+
+	result, err := exchange.MarketOrder(req, nil)
+	if err != nil {
+		t.Fatalf("MarketOrder failed: %v", err)
+	}
+
+	t.Logf("Market order result: %+v", result)
+}
+
+func TestCreateMarketOrder(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	t.Log("CreateMarketOrder convenience method is available and ready to use")
+
+	// Example usage with CreateMarketOrder convenience function:
+	result, err := exchange.CreateMarketOrder("SOL", true, 0.01, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateMarketOrder failed: %v", err)
+	}
+
+	t.Logf("CreateMarketOrder result: %+v", result)
+}
+
 func TestMarketOpen(t *testing.T) {
 	godotenv.Overload()
 	exchange := newTestExchange(t) // exchange used for setup only
@@ -66,13 +105,12 @@ func TestMarketOpen(t *testing.T) {
 	// Example usage:
 	name := "BTC"
 	isBuy := true
-	sz := 0.01
+	sz := 0.001
 	slippage := 0.01 // 1%
 
 	result, err := exchange.MarketOpen(name, isBuy, sz, nil, slippage, nil, nil)
 	if err != nil {
-		log.Printf("MarketOpen result: %+v", result)
-		t.Fatalf("MarketOpen failed: %+v", err)
+		t.Fatalf("MarketOpen failed: %v", err)
 	}
 
 	t.Logf("Market open result: %+v", result)

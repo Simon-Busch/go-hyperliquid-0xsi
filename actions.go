@@ -70,9 +70,10 @@ type VaultUsdTransferAction struct {
 
 // UpdateLeverageAction represents leverage update
 type UpdateLeverageAction struct {
-	Type     string         `json:"type"     msgpack:"type"`
-	Asset    int            `json:"asset"    msgpack:"asset"`
-	Leverage map[string]any `json:"leverage" msgpack:"leverage"`
+	Type     string `json:"type"     msgpack:"type"`
+	Asset    int    `json:"asset"    msgpack:"asset"`
+	IsCross  bool   `json:"isCross"  msgpack:"isCross"`
+	Leverage int    `json:"leverage" msgpack:"leverage"`
 }
 
 // UpdateIsolatedMarginAction represents isolated margin update
@@ -159,42 +160,52 @@ type UseBigBlocksAction struct {
 
 // TokenDelegateAction represents token delegate action
 type TokenDelegateAction struct {
-	Type         string `json:"type"         msgpack:"type"`
-	Validator    string `json:"validator"    msgpack:"validator"`
-	Wei          int    `json:"wei"          msgpack:"wei"`
-	IsUndelegate bool   `json:"isUndelegate" msgpack:"isUndelegate"`
-	Nonce        int64  `json:"nonce"        msgpack:"nonce"`
+	Type             string `json:"type"             msgpack:"type"`
+	HyperliquidChain string `json:"hyperliquidChain" msgpack:"hyperliquidChain"`
+	SignatureChainId string `json:"signatureChainId" msgpack:"signatureChainId"`
+	Validator        string `json:"validator"        msgpack:"validator"`
+	Wei              int    `json:"wei"              msgpack:"wei"`
+	IsUndelegate     bool   `json:"isUndelegate"     msgpack:"isUndelegate"`
+	Nonce            int64  `json:"nonce"            msgpack:"nonce"`
 }
 
 // WithdrawFromBridgeAction represents withdraw from bridge action
 type WithdrawFromBridgeAction struct {
-	Type        string `json:"type"        msgpack:"type"`
-	Destination string `json:"destination" msgpack:"destination"`
-	Amount      string `json:"amount"      msgpack:"amount"`
-	Time        int64  `json:"time"        msgpack:"time"`
+	Type             string `json:"type"             msgpack:"type"`
+	HyperliquidChain string `json:"hyperliquidChain" msgpack:"hyperliquidChain"`
+	SignatureChainId string `json:"signatureChainId" msgpack:"signatureChainId"`
+	Destination      string `json:"destination"      msgpack:"destination"`
+	Amount           string `json:"amount"           msgpack:"amount"`
+	Time             int64  `json:"time"             msgpack:"time"`
 }
 
 // ApproveAgentAction represents approve agent action
 type ApproveAgentAction struct {
-	Type         string  `json:"type"                msgpack:"type"`
-	AgentAddress string  `json:"agentAddress"        msgpack:"agentAddress"`
-	AgentName    *string `json:"agentName,omitempty" msgpack:"agentName,omitempty"`
-	Nonce        int64   `json:"nonce"               msgpack:"nonce"`
+	Type             string  `json:"type"                msgpack:"type"`
+	HyperliquidChain string  `json:"hyperliquidChain"    msgpack:"hyperliquidChain"`
+	SignatureChainId string  `json:"signatureChainId"    msgpack:"signatureChainId"`
+	AgentAddress     string  `json:"agentAddress"        msgpack:"agentAddress"`
+	AgentName        *string `json:"agentName,omitempty" msgpack:"agentName,omitempty"`
+	Nonce            int64   `json:"nonce"               msgpack:"nonce"`
 }
 
 // ApproveBuilderFeeAction represents approve builder fee action
 type ApproveBuilderFeeAction struct {
-	Type       string `json:"type"       msgpack:"type"`
-	Builder    string `json:"builder"    msgpack:"builder"`
-	MaxFeeRate string `json:"maxFeeRate" msgpack:"maxFeeRate"`
-	Nonce      int64  `json:"nonce"      msgpack:"nonce"`
+	Type             string `json:"type"             msgpack:"type"`
+	HyperliquidChain string `json:"hyperliquidChain" msgpack:"hyperliquidChain"`
+	SignatureChainId string `json:"signatureChainId" msgpack:"signatureChainId"`
+	Builder          string `json:"builder"          msgpack:"builder"`
+	MaxFeeRate       string `json:"maxFeeRate"       msgpack:"maxFeeRate"`
+	Nonce            int64  `json:"nonce"            msgpack:"nonce"`
 }
 
 // ConvertToMultiSigUserAction represents convert to multi-sig user action
 type ConvertToMultiSigUserAction struct {
-	Type    string `json:"type"    msgpack:"type"`
-	Signers string `json:"signers" msgpack:"signers"`
-	Nonce   int64  `json:"nonce"   msgpack:"nonce"`
+	Type             string `json:"type"             msgpack:"type"`
+	HyperliquidChain string `json:"hyperliquidChain" msgpack:"hyperliquidChain"`
+	SignatureChainId string `json:"signatureChainId" msgpack:"signatureChainId"`
+	Signers          string `json:"signers"          msgpack:"signers"`
+	Nonce            int64  `json:"nonce"            msgpack:"nonce"`
 }
 
 // MultiSigAction represents multi-signature action
@@ -203,4 +214,33 @@ type MultiSigAction struct {
 	Action     map[string]any `json:"action"     msgpack:"action"`
 	Signers    []string       `json:"signers"    msgpack:"signers"`
 	Signatures []string       `json:"signatures" msgpack:"signatures"`
+}
+
+// TWAPOrderAction represents TWAP order action
+type TWAPOrderAction struct {
+	Type string        `json:"type" msgpack:"type"`
+	TWAP TWAPOrderWire `json:"twap" msgpack:"twap"`
+}
+
+// TWAPOrderWire represents TWAP order wire format
+type TWAPOrderWire struct {
+	Asset      int    `json:"a" msgpack:"a"`
+	IsBuy      bool   `json:"b" msgpack:"b"`
+	Size       string `json:"s" msgpack:"s"`
+	ReduceOnly bool   `json:"r" msgpack:"r"`
+	Minutes    int    `json:"m" msgpack:"m"`
+	Randomize  bool   `json:"t" msgpack:"t"`
+}
+
+// TWAPCancelAction represents TWAP cancel action
+type TWAPCancelAction struct {
+	Type   string `json:"type" msgpack:"type"`
+	Asset  int    `json:"a"    msgpack:"a"`
+	TWAPID int    `json:"t"    msgpack:"t"`
+}
+
+// ReserveRequestWeightAction represents reserve request weight action
+type ReserveRequestWeightAction struct {
+	Type   string `json:"type"   msgpack:"type"`
+	Weight int    `json:"weight" msgpack:"weight"`
 }

@@ -89,7 +89,7 @@ type LimitOrderType struct {
 }
 
 type TriggerOrderType struct {
-	TriggerPx float64 `json:"triggerPx"`
+	TriggerPx float64 `json:"triggerPx"` // Keep as float64 for internal use, convert to string in wire format
 	IsMarket  bool    `json:"isMarket"`
 	Tpsl      string  `json:"tpsl"` // "tp" or "sl"
 }
@@ -97,6 +97,22 @@ type TriggerOrderType struct {
 type BuilderInfo struct {
 	Builder string `json:"b"`
 	Fee     int    `json:"f"`
+}
+
+// Wire format types for order types (used in actions.go)
+type OrderTypeWire struct {
+	Limit   *LimitOrderTypeWire   `json:"limit,omitempty"`
+	Trigger *TriggerOrderTypeWire `json:"trigger,omitempty"`
+}
+
+type LimitOrderTypeWire struct {
+	Tif string `json:"tif"` // TifAlo, TifIoc, TifGtc
+}
+
+type TriggerOrderTypeWire struct {
+	TriggerPx string `json:"triggerPx"`
+	IsMarket  bool   `json:"isMarket"`
+	Tpsl      string `json:"tpsl"` // "tp" or "sl"
 }
 
 type CancelRequest struct {

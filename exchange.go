@@ -53,7 +53,6 @@ func (e *Exchange) executeAction(action any, result any) error {
 		return err
 	}
 
-
 	err = json.Unmarshal(resp, result)
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal response: %w", err)
@@ -92,4 +91,14 @@ func (e *Exchange) postAction(
 	}
 
 	return e.client.post("/exchange", payload)
+}
+
+// GetAccountAddr returns the account address
+func (e *Exchange) GetAccountAddr() string {
+	return e.accountAddr
+}
+
+// GetInfo returns the info instance
+func (e *Exchange) GetInfo() *Info {
+	return e.info
 }
