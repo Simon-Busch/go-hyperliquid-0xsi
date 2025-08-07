@@ -5,7 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -62,7 +65,6 @@ func (e *Exchange) SlippagePrice(
 	slippage float64,
 	px *float64,
 ) (float64, error) {
-	coin := e.info.nameToCoin[name]
 	var price float64
 
 	if px != nil {
@@ -73,31 +75,99 @@ func (e *Exchange) SlippagePrice(
 		if err != nil {
 			return 0, err
 		}
-		if midPriceStr, exists := mids[coin]; exists {
-			price = parseFloat(midPriceStr)
+		if midPriceStr, ok := mids[name]; ok {
+			price, err = strconv.ParseFloat(midPriceStr, 64)
+			if err != nil {
+				return 0, fmt.Errorf("failed to parse midprice for %s: %w", name, err)
+			}
 		} else {
-			return 0, fmt.Errorf("could not get mid price for coin: %s", coin)
+			return 0, fmt.Errorf("no midprice found for %s", name)
 		}
 	}
 
-	asset := e.info.coinToAsset[coin]
+	// Apply slippage
+	if isBuy {
+		price = price * (1 + slippage)
+	} else {
+		price = price * (1 - slippage)
+	}
+
+	// Get asset info for proper price formatting
+	asset := e.info.NameToAsset(name)
+	szDecimals := e.info.assetToDecimal[asset]
 	isSpot := asset >= 10000
 
-	// Calculate slippage
-	if isBuy {
-		price *= (1 + slippage)
-	} else {
-		price *= (1 - slippage)
-	}
+	// Apply proper price formatting according to Hyperliquid docs:
+	// - Up to 5 significant figures
+	// - No more than MAX_DECIMALS - szDecimals decimal places
+	// - MAX_DECIMALS is 6 for perps, 8 for spot
+	price = formatPriceToTickSize(price, szDecimals, isSpot)
 
-	// Round to appropriate decimals
-	decimals := 6
+	return price, nil
+}
+
+// formatPriceToTickSize formats price according to Hyperliquid tick size rules
+// Based on: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
+func formatPriceToTickSize(price float64, szDecimals int, isSpot bool) float64 {
+	maxDecimals := 6 // perps
 	if isSpot {
-		decimals = 8
+		maxDecimals = 8 // spot
 	}
-	szDecimals := e.info.assetToDecimal[asset]
 
-	return roundToDecimals(price, decimals-szDecimals), nil
+	maxPriceDecimals := maxDecimals - szDecimals
+
+	// Round to the appropriate number of decimal places
+	multiplier := math.Pow(10, float64(maxPriceDecimals))
+	rounded := math.Round(price*multiplier) / multiplier
+
+	// Convert to string to check significant figures
+	priceStr := fmt.Sprintf("%.10f", rounded)
+	priceStr = strings.TrimRight(priceStr, "0")
+	priceStr = strings.TrimRight(priceStr, ".")
+
+	// Parse back to float
+	result, _ := strconv.ParseFloat(priceStr, 64)
+
+	// Ensure we don't exceed 5 significant figures
+	// Convert to string and count significant figures
+	sigFigs := countSignificantFigures(result)
+	if sigFigs > 5 {
+		// Round to 5 significant figures
+		scale := math.Pow(10, float64(sigFigs-5))
+		result = math.Round(result/scale) * scale
+	}
+
+	return result
+}
+
+// countSignificantFigures counts the number of significant figures in a number
+func countSignificantFigures(num float64) int {
+	if num == 0 {
+		return 1
+	}
+
+	// Convert to string without scientific notation
+	str := fmt.Sprintf("%.10f", num)
+	str = strings.TrimRight(str, "0")
+	str = strings.TrimRight(str, ".")
+
+	// Remove decimal point for counting
+	str = strings.ReplaceAll(str, ".", "")
+
+	// Count non-zero digits
+	count := 0
+	for _, char := range str {
+		if char != '0' {
+			count++
+		}
+	}
+
+	return count
+}
+
+// roundToTickSize rounds a price to the nearest tick size
+func roundToTickSize(price, tickSize float64) float64 {
+	return math.Round(price/tickSize) * tickSize
 }
 
 // ScheduleCancel schedules cancellation of all open orders

@@ -14,16 +14,6 @@ type CreateOrderRequest struct {
 	ClientOrderID *string
 }
 
-type createOrderRequest struct {
-	Asset         int       `json:"a"`
-	IsBuy         bool      `json:"b"`
-	Price         string    `json:"p"`
-	Size          string    `json:"s"`
-	ReduceOnly    bool      `json:"r"`
-	OrderType     OrderType `json:"t"`
-	ClientOrderID *string   `json:"c,omitempty"`
-}
-
 type OrderStatusResting struct {
 	Oid      int64  `json:"oid"`
 	ClientID string `json:"cid"`
@@ -39,7 +29,7 @@ type OrderStatusFilled struct {
 type OrderStatus struct {
 	Resting *OrderStatusResting `json:"resting,omitempty"`
 	Filled  *OrderStatusFilled  `json:"filled,omitempty"`
-	Error   *error              `json:"error,omitempty"`
+	Error   *string             `json:"error,omitempty"`
 }
 
 type OrderResponse struct {
@@ -63,7 +53,6 @@ func newCreateOrderAction(
 			return OrderAction{}, fmt.Errorf("failed to wire size for order %d: %w", i, err)
 		}
 
-		// Build order type map with proper field ordering
 		orderTypeMap := make(map[string]any)
 		if order.OrderType.Limit != nil {
 			orderTypeMap["limit"] = map[string]any{
@@ -77,7 +66,7 @@ func newCreateOrderAction(
 			}
 		}
 
-		orderWire := OrderWire{
+		orderRequests[i] = OrderWire{
 			Asset:      e.info.NameToAsset(order.Coin),
 			IsBuy:      order.IsBuy,
 			LimitPx:    priceWire,
@@ -86,17 +75,14 @@ func newCreateOrderAction(
 			OrderType:  orderTypeMap,
 			Cloid:      order.ClientOrderID,
 		}
-		orderRequests[i] = orderWire
 	}
 
-	res := OrderAction{
+	return OrderAction{
 		Type:     "order",
 		Orders:   orderRequests,
-		Grouping: string(GroupingNA),
+		Grouping: "na",
 		Builder:  info,
-	}
-
-	return res, nil
+	}, nil
 }
 
 func (e *Exchange) Order(
@@ -114,12 +100,14 @@ func (e *Exchange) Order(
 	}
 
 	data := resp.Data
+
 	if len(data.Statuses) == 0 {
-		err = fmt.Errorf("no status for order: %s", resp.Err)
+		err = fmt.Errorf("no order status returned")
 		return
 	}
 
-	return data.Statuses[0], nil
+	result = data.Statuses[0]
+	return
 }
 
 func (e *Exchange) BulkOrders(
@@ -274,18 +262,22 @@ func (e *Exchange) MarketOpen(
 	}
 
 	orderType := OrderType{
-		Limit: &LimitOrderType{Tif: TifIoc},
+		Limit: &LimitOrderType{
+			Tif: TifIoc,
+		},
 	}
 
-	return e.Order(CreateOrderRequest{
+	req := CreateOrderRequest{
 		Coin:          name,
 		IsBuy:         isBuy,
 		Size:          sz,
 		Price:         slippagePrice,
-		OrderType:     orderType,
 		ReduceOnly:    false,
+		OrderType:     orderType,
 		ClientOrderID: cloid,
-	}, builder)
+	}
+
+	return e.Order(req, builder)
 }
 
 // MarketClose closes a position

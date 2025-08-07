@@ -1,6 +1,7 @@
 package examples
 
 import (
+	"log"
 	"testing"
 
 	"github.com/joho/godotenv"
@@ -65,12 +66,13 @@ func TestMarketOpen(t *testing.T) {
 	// Example usage:
 	name := "BTC"
 	isBuy := true
-	sz := 0.001
+	sz := 0.01
 	slippage := 0.01 // 1%
 
 	result, err := exchange.MarketOpen(name, isBuy, sz, nil, slippage, nil, nil)
 	if err != nil {
-		t.Fatalf("MarketOpen failed: %v", err)
+		log.Printf("MarketOpen result: %+v", result)
+		t.Fatalf("MarketOpen failed: %+v", err)
 	}
 
 	t.Logf("Market open result: %+v", result)

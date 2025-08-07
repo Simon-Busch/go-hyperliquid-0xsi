@@ -3,6 +3,7 @@ package hyperliquid
 import (
 	"crypto/ecdsa"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -52,8 +53,10 @@ func (e *Exchange) executeAction(action any, result any) error {
 		return err
 	}
 
-	if err := json.Unmarshal(resp, result); err != nil {
-		return err
+
+	err = json.Unmarshal(resp, result)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
 	return nil
@@ -72,20 +75,20 @@ func (e *Exchange) postAction(
 
 	// Handle vault address based on action type
 	if actionMap, ok := action.(map[string]any); ok {
-		if actionMap["type"] != "usdClassTransfer" {
-			payload["vaultAddress"] = e.vault
-		} else {
+		if actionMap["type"] == "usdClassTransfer" {
+			// For usdClassTransfer, explicitly set vaultAddress to nil
 			payload["vaultAddress"] = nil
+		}
+		// For all other action types, only include vaultAddress if it's not empty
+		if e.vault != "" {
+			payload["vaultAddress"] = e.vault
 		}
 	} else {
 		// For struct types, we need to use reflection or type assertion
 		// For now, assume it's not usdClassTransfer
-		payload["vaultAddress"] = e.vault
-	}
-
-	// Add expiration time if set
-	if e.expiresAfter != nil {
-		payload["expiresAfter"] = *e.expiresAfter
+		if e.vault != "" {
+			payload["vaultAddress"] = e.vault
+		}
 	}
 
 	return e.client.post("/exchange", payload)

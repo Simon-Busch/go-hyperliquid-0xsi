@@ -46,15 +46,22 @@ func (r *APIResponse[T]) UnmarshalJSON(data []byte) error {
 
 	// When status is "ok", "response" contains "type" and "data"
 	r.Type = string(parsed.GetStringBytes("response", "type"))
-	responseData := parsed.GetStringBytes("response", "data")
 
-	if responseData == nil {
+	// Check if response.data exists (nested structure)
+	if parsed.Exists("response", "data") {
+		// The data is nested under response.data
+		dataBytes := parsed.Get("response", "data").MarshalTo(nil)
+		if err := json.Unmarshal(dataBytes, &r.Data); err != nil {
+			return fmt.Errorf("failed to unmarshal response.data: %w", err)
+		}
+	} else if parsed.Exists("response") {
+		// The data is directly under response
+		responseBytes := parsed.Get("response").MarshalTo(nil)
+		if err := json.Unmarshal(responseBytes, &r.Data); err != nil {
+			return fmt.Errorf("failed to unmarshal response: %w", err)
+		}
+	} else {
 		return fmt.Errorf("missing response.data field in successful response")
-	}
-
-	// Use fastjson's built-in unmarshaling if possible, fallback to json.Unmarshal
-	if err := json.Unmarshal(responseData, &r.Data); err != nil {
-		return fmt.Errorf("failed to unmarshal response data: %w", err)
 	}
 
 	return nil

@@ -59,24 +59,20 @@ func (c *Client) post(path string, payload any) ([]byte, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body := make([]byte, 0)
-	if resp.Body != nil {
-		body, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read response body: %w", err)
-		}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if resp.StatusCode >= httpErrorStatusCode {
-		var apiErr APIError
-		if err := json.Unmarshal(body, &apiErr); err != nil {
-			return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode >= 400 {
+		return nil, &APIError{
+			Code:    resp.StatusCode,
+			Message: string(body),
 		}
-		return nil, apiErr
 	}
 
 	return body, nil
