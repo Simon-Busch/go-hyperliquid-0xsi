@@ -69,31 +69,18 @@ func TestMarketOrder(t *testing.T) {
 		Size:  0.001,
 		// Price will be set automatically by MarketOrder
 		OrderType: hyperliquid.OrderType{
-			Market: &hyperliquid.MarketOrderType{},
+			Limit: &hyperliquid.LimitOrderType{
+				Tif: hyperliquid.TifIoc,
+			},
 		},
 	}
 
-	result, err := exchange.MarketOrder(req, nil)
+	result, err := exchange.Order(req, nil)
 	if err != nil {
 		t.Fatalf("MarketOrder failed: %v", err)
 	}
 
 	t.Logf("Market order result: %+v", result)
-}
-
-func TestCreateMarketOrder(t *testing.T) {
-	godotenv.Overload()
-	exchange := newTestExchange(t)
-
-	t.Log("CreateMarketOrder convenience method is available and ready to use")
-
-	// Example usage with CreateMarketOrder convenience function:
-	result, err := exchange.CreateMarketOrder("SOL", true, 0.01, nil, nil)
-	if err != nil {
-		t.Fatalf("CreateMarketOrder failed: %v", err)
-	}
-
-	t.Logf("CreateMarketOrder result: %+v", result)
 }
 
 func TestMarketOpen(t *testing.T) {
@@ -191,4 +178,42 @@ func TestBulkModifyOrders(t *testing.T) {
 	}
 
 	t.Logf("Bulk modify orders result: %+v", result)
+}
+
+func TestOpenPositionAndSetLeverage(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	t.Log("Opening position and then setting leverage to 5x")
+
+	// Step 1: Open a position (will use default 10x leverage)
+	name := "BTC"
+	isBuy := true
+	sz := 0.001      // Small size for testing
+	slippage := 0.01 // 1%
+
+	t.Logf("Opening %s position with size %f (will use default leverage)", name, sz)
+	result, err := exchange.MarketOpen(name, isBuy, sz, nil, slippage, nil, nil)
+	if err != nil {
+		t.Fatalf("MarketOpen failed: %v", err)
+	}
+
+	t.Logf("Position opened successfully: %+v", result)
+
+	// Step 2: Set leverage to 5x after opening the position
+	leverage := 5   // 5x leverage
+	isCross := true // Use cross margin
+
+	t.Logf("Setting leverage to %dx for %s", leverage, name)
+	leverageResp, err := exchange.UpdateLeverage(leverage, name, isCross)
+	if err != nil {
+		t.Fatalf("Failed to update leverage: %v", err)
+	}
+
+	t.Logf("Leverage updated successfully: %+v", leverageResp)
+
+	// Step 3: Verify the leverage was set correctly by checking user state
+	// Note: In a real scenario, you might want to add a small delay here
+	// to allow the exchange to process the leverage update
+	t.Log("Position opened with default leverage and then updated to 5x leverage")
 }

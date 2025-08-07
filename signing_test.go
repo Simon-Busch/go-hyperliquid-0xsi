@@ -277,11 +277,12 @@ func TestDebugActionHash(t *testing.T) {
 			LimitPx:    "100.5",
 			Size:       "1.0",
 			ReduceOnly: false,
-			OrderType: OrderTypeWire{
-				Limit: &LimitOrderTypeWire{
-					Tif: "Gtc",
+			OrderType: map[string]any{
+				"limit": map[string]any{
+					"tif": "Gtc",
 				},
 			},
+			Cloid: nil,
 		}},
 		Grouping: "na",
 	}
