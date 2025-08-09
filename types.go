@@ -101,18 +101,18 @@ type BuilderInfo struct {
 
 // Wire format types for order types (used in actions.go)
 type OrderTypeWire struct {
-	Limit   *LimitOrderTypeWire   `json:"limit,omitempty"`
-	Trigger *TriggerOrderTypeWire `json:"trigger,omitempty"`
+	Limit   *LimitOrderTypeWire   `json:"limit,omitempty" msgpack:"limit,omitempty"`
+	Trigger *TriggerOrderTypeWire `json:"trigger,omitempty" msgpack:"trigger,omitempty"`
 }
 
 type LimitOrderTypeWire struct {
-	Tif string `json:"tif"` // TifAlo, TifIoc, TifGtc
+	Tif string `json:"tif" msgpack:"tif"` // TifAlo, TifIoc, TifGtc
 }
 
 type TriggerOrderTypeWire struct {
-	TriggerPx string `json:"triggerPx"`
-	IsMarket  bool   `json:"isMarket"`
-	Tpsl      string `json:"tpsl"` // "tp" or "sl"
+	IsMarket  bool   `json:"isMarket" msgpack:"isMarket"`
+	TriggerPx string `json:"triggerPx" msgpack:"triggerPx"`
+	Tpsl      string `json:"tpsl" msgpack:"tpsl"` // "tp" or "sl"
 }
 
 type CancelRequest struct {

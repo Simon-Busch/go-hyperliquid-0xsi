@@ -19,9 +19,7 @@ import (
 
 // addressToBytes converts a hex address to bytes, matching Python's address_to_bytes
 func addressToBytes(address string) []byte {
-	if strings.HasPrefix(address, "0x") {
-		address = address[2:]
-	}
+	address = strings.TrimPrefix(address, "0x")
 	bytes, _ := hex.DecodeString(address)
 	return bytes
 }
@@ -80,7 +78,7 @@ func constructPhantomAgent(hash []byte, isMainnet bool) map[string]any {
 	}
 	return map[string]any{
 		"source":       source,
-		"connectionId": hash,
+		"connectionId": "0x" + hex.EncodeToString(hash),
 	}
 }
 

@@ -86,13 +86,13 @@ type UpdateIsolatedMarginAction struct {
 
 // OrderWire represents the wire format for orders with deterministic field ordering
 type OrderWire struct {
-	Asset      int            `json:"a"           msgpack:"a"`
-	IsBuy      bool           `json:"b"           msgpack:"b"`
-	LimitPx    string         `json:"p"           msgpack:"p"`
-	Size       string         `json:"s"           msgpack:"s"`
-	ReduceOnly bool           `json:"r"           msgpack:"r"`
-	OrderType  map[string]any `json:"t"           msgpack:"t"`
-	Cloid      *string        `json:"c,omitempty" msgpack:"c,omitempty"`
+	Asset      int           `json:"a"           msgpack:"a"`
+	IsBuy      bool          `json:"b"           msgpack:"b"`
+	LimitPx    string        `json:"p"           msgpack:"p"`
+	Size       string        `json:"s"           msgpack:"s"`
+	ReduceOnly bool          `json:"r"           msgpack:"r"`
+	OrderType  OrderTypeWire `json:"t"           msgpack:"t"`
+	Cloid      *string       `json:"c,omitempty" msgpack:"c,omitempty"`
 }
 
 // OrderAction represents the order action with deterministic field ordering

@@ -33,13 +33,24 @@ type OrderStatus struct {
 }
 
 type OrderResponse struct {
-	Statuses []OrderStatus
+	Statuses MixedArray `json:"statuses"`
 }
 
+// newCreateOrderAction builds an order action with grouping set to "na"
 func newCreateOrderAction(
 	e *Exchange,
 	orders []CreateOrderRequest,
 	info *BuilderInfo,
+) (OrderAction, error) {
+	return newCreateOrderActionWithGrouping(e, orders, info, GroupingNA)
+}
+
+// newCreateOrderActionWithGrouping builds an order action allowing a specific grouping
+func newCreateOrderActionWithGrouping(
+	e *Exchange,
+	orders []CreateOrderRequest,
+	info *BuilderInfo,
+	grouping Grouping,
 ) (OrderAction, error) {
 	orderRequests := make([]OrderWire, len(orders))
 	for i, order := range orders {
@@ -53,16 +64,18 @@ func newCreateOrderAction(
 			return OrderAction{}, fmt.Errorf("failed to wire size for order %d: %w", i, err)
 		}
 
-		orderTypeMap := make(map[string]any)
+		var orderTypeWire OrderTypeWire
 		if order.OrderType.Limit != nil {
-			orderTypeMap["limit"] = map[string]any{
-				"tif": order.OrderType.Limit.Tif,
-			}
+			orderTypeWire.Limit = &LimitOrderTypeWire{Tif: order.OrderType.Limit.Tif}
 		} else if order.OrderType.Trigger != nil {
-			orderTypeMap["trigger"] = map[string]any{
-				"triggerPx": order.OrderType.Trigger.TriggerPx,
-				"isMarket":  order.OrderType.Trigger.IsMarket,
-				"tpsl":      order.OrderType.Trigger.Tpsl,
+			triggerPxWire, err := floatToWire(order.OrderType.Trigger.TriggerPx)
+			if err != nil {
+				return OrderAction{}, fmt.Errorf("failed to wire trigger price for order %d: %w", i, err)
+			}
+			orderTypeWire.Trigger = &TriggerOrderTypeWire{
+				TriggerPx: triggerPxWire,
+				IsMarket:  order.OrderType.Trigger.IsMarket,
+				Tpsl:      order.OrderType.Trigger.Tpsl,
 			}
 		}
 
@@ -72,7 +85,7 @@ func newCreateOrderAction(
 			LimitPx:    priceWire,
 			Size:       sizeWire,
 			ReduceOnly: order.ReduceOnly,
-			OrderType:  orderTypeMap,
+			OrderType:  orderTypeWire,
 			Cloid:      order.ClientOrderID,
 		}
 	}
@@ -80,7 +93,7 @@ func newCreateOrderAction(
 	return OrderAction{
 		Type:     "order",
 		Orders:   orderRequests,
-		Grouping: "na",
+		Grouping: string(grouping),
 		Builder:  info,
 	}, nil
 }
@@ -100,14 +113,26 @@ func (e *Exchange) Order(
 	}
 
 	data := resp.Data
-
 	if len(data.Statuses) == 0 {
 		err = fmt.Errorf("no order status returned")
 		return
 	}
 
-	result = data.Statuses[0]
-	return
+	// Parse the first status if it's an object; ignore string tokens like "waitingForTrigger"
+	first := data.Statuses[0]
+	switch first.Type() {
+	case "object":
+		var st OrderStatus
+		if err := first.Parse(&st); err != nil {
+			return OrderStatus{}, fmt.Errorf("failed to parse order status: %w", err)
+		}
+		return st, nil
+	case "string":
+		// Return empty with an informational error to signal non-object status
+		return OrderStatus{}, fmt.Errorf("order status is token: %s", string(first))
+	default:
+		return OrderStatus{}, fmt.Errorf("unexpected order status type: %s", first.Type())
+	}
 }
 
 func (e *Exchange) BulkOrders(
@@ -115,6 +140,20 @@ func (e *Exchange) BulkOrders(
 	builder *BuilderInfo,
 ) (result *APIResponse[OrderResponse], err error) {
 	action, err := newCreateOrderAction(e, orders, builder)
+	if err != nil {
+		return nil, err
+	}
+	err = e.executeAction(action, &result)
+	return
+}
+
+// BulkOrdersWithGrouping places multiple orders in a single action with the provided grouping
+func (e *Exchange) BulkOrdersWithGrouping(
+	orders []CreateOrderRequest,
+	grouping Grouping,
+	builder *BuilderInfo,
+) (result *APIResponse[OrderResponse], err error) {
+	action, err := newCreateOrderActionWithGrouping(e, orders, builder, grouping)
 	if err != nil {
 		return nil, err
 	}
@@ -141,17 +180,19 @@ func newModifyOrderAction(
 		return ModifyAction{}, fmt.Errorf("failed to wire size: %w", err)
 	}
 
-	// Build order type map with proper field ordering
-	orderTypeMap := make(map[string]any)
+	// Build order type with deterministic wire struct
+	var orderTypeWire OrderTypeWire
 	if modifyRequest.Order.OrderType.Limit != nil {
-		orderTypeMap["limit"] = map[string]any{
-			"tif": modifyRequest.Order.OrderType.Limit.Tif,
-		}
+		orderTypeWire.Limit = &LimitOrderTypeWire{Tif: modifyRequest.Order.OrderType.Limit.Tif}
 	} else if modifyRequest.Order.OrderType.Trigger != nil {
-		orderTypeMap["trigger"] = map[string]any{
-			"triggerPx": modifyRequest.Order.OrderType.Trigger.TriggerPx,
-			"isMarket":  modifyRequest.Order.OrderType.Trigger.IsMarket,
-			"tpsl":      modifyRequest.Order.OrderType.Trigger.Tpsl,
+		triggerPxWire, err := floatToWire(modifyRequest.Order.OrderType.Trigger.TriggerPx)
+		if err != nil {
+			return ModifyAction{}, fmt.Errorf("failed to wire trigger price: %w", err)
+		}
+		orderTypeWire.Trigger = &TriggerOrderTypeWire{
+			TriggerPx: triggerPxWire,
+			IsMarket:  modifyRequest.Order.OrderType.Trigger.IsMarket,
+			Tpsl:      modifyRequest.Order.OrderType.Trigger.Tpsl,
 		}
 	}
 
@@ -164,7 +205,7 @@ func newModifyOrderAction(
 			LimitPx:    priceWire,
 			Size:       sizeWire,
 			ReduceOnly: modifyRequest.Order.ReduceOnly,
-			OrderType:  orderTypeMap,
+			OrderType:  orderTypeWire,
 			Cloid:      modifyRequest.Order.ClientOrderID,
 		},
 	}, nil
@@ -201,22 +242,28 @@ func (e *Exchange) ModifyOrder(
 
 	err = e.executeAction(action, &resp)
 	if err != nil {
-		err = fmt.Errorf("failed to modify order: %w", err)
-		return
+		return result, fmt.Errorf("failed to modify order: %w", err)
 	}
 
 	if !resp.Ok {
-		err = fmt.Errorf("failed to modify order: %s", resp.Err)
-		return
+		return result, fmt.Errorf("failed to modify order: %s", resp.Err)
 	}
 
 	data := resp.Data
 	if len(data.Statuses) == 0 {
-		err = fmt.Errorf("no status for modified order: %s", resp.Err)
-		return
+		return result, fmt.Errorf("no status for modified order: %s", resp.Err)
 	}
 
-	return data.Statuses[0], nil
+	// Parse first object status
+	first := data.Statuses[0]
+	if first.Type() != "object" {
+		return result, fmt.Errorf("unexpected status type: %s", first.Type())
+	}
+	var parsed OrderStatus
+	if err := first.Parse(&parsed); err != nil {
+		return result, fmt.Errorf("failed to parse modified order status: %w", err)
+	}
+	return parsed, nil
 }
 
 // BulkModifyOrders modifies multiple orders
@@ -242,8 +289,22 @@ func (e *Exchange) BulkModifyOrders(
 	if len(data.Statuses) == 0 {
 		return nil, fmt.Errorf("no status for modified order: %s", resp.Err)
 	}
-
-	return data.Statuses, nil
+	// Parse only object statuses
+	var out []OrderStatus
+	for _, mv := range data.Statuses {
+		if mv.Type() != "object" {
+			continue
+		}
+		var st OrderStatus
+		if err := mv.Parse(&st); err != nil {
+			return nil, fmt.Errorf("failed to parse modified status: %w", err)
+		}
+		out = append(out, st)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no object statuses returned")
+	}
+	return out, nil
 }
 
 // MarketOpen opens a market position
@@ -278,6 +339,67 @@ func (e *Exchange) MarketOpen(
 	}
 
 	return e.Order(req, builder)
+}
+
+// MarketOpenWithSLTP opens a position and places either a Stop-Loss (isTP=false) or Take-Profit (isTP=true)
+// trigger in a single grouped action. The trigger is reduce-only and market-on-trigger.
+func (e *Exchange) MarketOpenWithSLTP(
+	name string,
+	isBuy bool,
+	sz float64,
+	px *float64,
+	slippage float64,
+	tpslPercent float64, // e.g., 0.10 means 10%
+	isTP bool,
+	cloidOpen *string,
+	cloidTPSL *string,
+	builder *BuilderInfo,
+) (result *APIResponse[OrderResponse], err error) {
+	// Compute the intended execution price for opening
+	openPx, err := e.SlippagePrice(name, isBuy, slippage, px)
+	if err != nil {
+		return nil, err
+	}
+
+	// Compute trigger price relative to open price
+	var triggerPx float64
+	if isTP {
+		if isBuy {
+			triggerPx = openPx * (1 + tpslPercent)
+		} else {
+			triggerPx = openPx * (1 - tpslPercent)
+		}
+	} else {
+		if isBuy {
+			triggerPx = openPx * (1 - tpslPercent)
+		} else {
+			triggerPx = openPx * (1 + tpslPercent)
+		}
+	}
+
+	// Build orders: 1) IOC open; 2) TP/SL trigger reduce-only
+	openOrder := CreateOrderRequest{
+		Coin:          name,
+		IsBuy:         isBuy,
+		Price:         openPx,
+		Size:          sz,
+		ReduceOnly:    false,
+		OrderType:     OrderType{Limit: &LimitOrderType{Tif: TifIoc}},
+		ClientOrderID: cloidOpen,
+	}
+
+	tpslTrigger := CreateOrderRequest{
+		Coin:          name,
+		IsBuy:         !isBuy,    // Close direction
+		Price:         triggerPx, // included per wire schema, though ignored when isMarket=true
+		Size:          sz,
+		ReduceOnly:    true,
+		OrderType:     OrderType{Trigger: &TriggerOrderType{TriggerPx: triggerPx, IsMarket: true, Tpsl: map[bool]string{true: "tp", false: "sl"}[isTP]}},
+		ClientOrderID: cloidTPSL,
+	}
+
+	// Use normalTpsl grouping to align with trigger order expectations
+	return e.BulkOrdersWithGrouping([]CreateOrderRequest{openOrder, tpslTrigger}, GroupingNormalTpsl, builder)
 }
 
 // MarketClose closes a position
