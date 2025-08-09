@@ -628,3 +628,148 @@ func TestShortSOLLeverageUpdateAndClose(t *testing.T) {
 		t.Log("[After] SOL position removed (no active position)")
 	}
 }
+
+func TestOpenPositionAndCancelCloseOrder(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	t.Log("Testing open position and cancel close order workflow")
+
+	// Step 1: Check initial user state
+	t.Log("Step 1: Checking initial user state")
+	initialUserState, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+	if err != nil {
+		t.Fatalf("Failed to get initial user state: %v", err)
+	}
+	t.Logf("Initial user state - Positions count: %d", len(initialUserState.AssetPositions))
+
+	// Step 2: Open a position
+	name := "BTC"
+	isBuy := true
+	sz := 0.001      // Small size for testing
+	slippage := 0.01 // 1%
+
+	t.Logf("Step 2: Opening %s position with size %f", name, sz)
+	result, err := exchange.MarketOpen(name, isBuy, sz, nil, slippage, nil, nil)
+	if err != nil {
+		t.Fatalf("MarketOpen failed: %v", err)
+	}
+	t.Logf("Position opened successfully: %+v", result)
+
+	// Step 3: Verify position was opened
+	t.Log("Step 3: Verifying position was opened")
+	afterOpenUserState, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+	if err != nil {
+		t.Fatalf("Failed to get user state after opening: %v", err)
+	}
+
+	var btcPosition *hyperliquid.Position
+	for _, pos := range afterOpenUserState.AssetPositions {
+		if pos.Position.Coin == name {
+			btcPosition = &pos.Position
+			t.Logf("Found BTC position - Size: %s, Leverage: %dx, Entry Price: %s",
+				pos.Position.Szi, pos.Position.Leverage.Value,
+				*pos.Position.EntryPx)
+			break
+		}
+	}
+
+	if btcPosition == nil {
+		t.Fatalf("BTC position not found after opening")
+	}
+
+	// Step 4: Place a limit order to close the position
+	t.Log("Step 4: Placing limit order to close position")
+	closeOrderReq := hyperliquid.CreateOrderRequest{
+		Coin:  name,
+		IsBuy: false,   // Sell to close long position
+		Size:  sz,      // Same size as opened position
+		Price: 45000.0, // Set a price that's unlikely to fill immediately
+		OrderType: hyperliquid.OrderType{
+			Limit: &hyperliquid.LimitOrderType{
+				Tif: hyperliquid.TifGtc, // Good till cancelled
+			},
+		},
+	}
+
+	closeOrderResp, err := exchange.Order(closeOrderReq, nil)
+	if err != nil {
+		t.Fatalf("Failed to place close order: %v", err)
+	}
+	t.Logf("Close order placed: %+v", closeOrderResp)
+
+	// Extract order ID from response
+	var orderID int64
+	if closeOrderResp.Resting != nil {
+		orderID = closeOrderResp.Resting.Oid
+		t.Logf("Order ID for cancellation: %d", orderID)
+	} else {
+		t.Skip("Close order was filled immediately, cannot test cancel")
+	}
+
+	// Step 5: Cancel the close order
+	t.Log("Step 5: Cancelling the close order")
+	cancelResp, err := exchange.Cancel(name, orderID)
+	if err != nil {
+		t.Fatalf("Failed to cancel order: %v", err)
+	}
+	t.Logf("Cancel response: %+v", cancelResp)
+
+	// Step 6: Verify position still exists (since we cancelled the close order)
+	t.Log("Step 6: Verifying position still exists after cancelling close order")
+	afterCancelUserState, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+	if err != nil {
+		t.Fatalf("Failed to get user state after cancelling: %v", err)
+	}
+
+	var btcPositionAfterCancel *hyperliquid.Position
+	for _, pos := range afterCancelUserState.AssetPositions {
+		if pos.Position.Coin == name {
+			btcPositionAfterCancel = &pos.Position
+			t.Logf("BTC position after cancelling close order - Size: %s", pos.Position.Szi)
+			break
+		}
+	}
+
+	if btcPositionAfterCancel == nil {
+		t.Fatalf("BTC position not found after cancelling close order - it should still exist")
+	}
+
+	// Step 7: Clean up - close the position properly
+	t.Log("Step 7: Cleaning up - closing position properly")
+	closeResult, err := exchange.MarketClose(name, nil, nil, slippage, nil, nil)
+	if err != nil {
+		t.Fatalf("MarketClose failed during cleanup: %v", err)
+	}
+	t.Logf("Position closed successfully during cleanup: %+v", closeResult)
+
+	// Step 8: Final verification
+	t.Log("Step 8: Final verification - checking position is closed")
+	finalUserState, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+	if err != nil {
+		t.Fatalf("Failed to get final user state: %v", err)
+	}
+
+	var finalBtcPosition *hyperliquid.Position
+	for _, pos := range finalUserState.AssetPositions {
+		if pos.Position.Coin == name {
+			finalBtcPosition = &pos.Position
+			break
+		}
+	}
+
+	if finalBtcPosition != nil {
+		size, err := strconv.ParseFloat(finalBtcPosition.Szi, 64)
+		if err != nil {
+			t.Logf("Warning: Could not parse final position size: %v", err)
+		} else if size != 0 {
+			t.Logf("Warning: Position still exists with size: %f", size)
+		} else {
+			t.Log("Position successfully closed (size = 0)")
+		}
+	} else {
+		t.Log("Position completely removed from user state")
+	}
+
+	t.Log("Test completed: Position opened, close order placed and cancelled, position still exists, then properly closed")
+}
