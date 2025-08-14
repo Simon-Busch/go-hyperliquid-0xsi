@@ -5,8 +5,8 @@ package hyperliquid
 
 // CancelOrderWire represents cancel order item wire format
 type CancelOrderWire struct {
-	Asset   int    `json:"a" msgpack:"a"`
-	OrderID string `json:"o" msgpack:"o"`
+	Asset   int   `json:"a" msgpack:"a"`
+	OrderID int64 `json:"o" msgpack:"o"`
 }
 
 // CancelAction represents the cancel action
