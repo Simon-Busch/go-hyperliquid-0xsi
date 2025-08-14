@@ -197,6 +197,23 @@ type OpenOrder struct {
 	Timestamp int64   `json:"timestamp"`
 }
 
+// FrontendOpenOrder represents the detailed order information returned by frontendOpenOrders
+type FrontendOpenOrder struct {
+	Coin             string  `json:"coin"`
+	IsPositionTpsl   bool    `json:"isPositionTpsl"`
+	IsTrigger        bool    `json:"isTrigger"`
+	LimitPx          float64 `json:"limitPx,string"`
+	Oid              int64   `json:"oid"`
+	OrderType        string  `json:"orderType"`
+	OrigSz           float64 `json:"origSz,string"`
+	ReduceOnly       bool    `json:"reduceOnly"`
+	Side             string  `json:"side"`
+	Size             float64 `json:"sz,string"`
+	Timestamp        int64   `json:"timestamp"`
+	TriggerCondition string  `json:"triggerCondition"`
+	TriggerPx        float64 `json:"triggerPx,string"`
+}
+
 type Fill struct {
 	ClosedPnl     string `json:"closedPnl"`
 	Coin          string `json:"coin"`
