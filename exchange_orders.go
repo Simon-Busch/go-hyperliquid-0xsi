@@ -54,12 +54,15 @@ func newCreateOrderActionWithGrouping(
 ) (OrderAction, error) {
 	orderRequests := make([]OrderWire, len(orders))
 	for i, order := range orders {
-		priceWire, err := floatToWire(order.Price)
+		asset := e.info.NameToAsset(order.Coin)
+		isSpot := asset >= 10000
+
+		priceWire, err := priceToWire(order.Price, asset, e.info, isSpot)
 		if err != nil {
 			return OrderAction{}, fmt.Errorf("failed to wire price for order %d: %w", i, err)
 		}
 
-		sizeWire, err := floatToWire(order.Size)
+		sizeWire, err := sizeToWireWithAsset(order.Size, asset, e.info)
 		if err != nil {
 			return OrderAction{}, fmt.Errorf("failed to wire size for order %d: %w", i, err)
 		}
@@ -68,7 +71,7 @@ func newCreateOrderActionWithGrouping(
 		if order.OrderType.Limit != nil {
 			orderTypeWire.Limit = &LimitOrderTypeWire{Tif: order.OrderType.Limit.Tif}
 		} else if order.OrderType.Trigger != nil {
-			triggerPxWire, err := floatToWire(order.OrderType.Trigger.TriggerPx)
+			triggerPxWire, err := priceToWire(order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot)
 			if err != nil {
 				return OrderAction{}, fmt.Errorf("failed to wire trigger price for order %d: %w", i, err)
 			}
@@ -170,12 +173,15 @@ func newModifyOrderAction(
 	e *Exchange,
 	modifyRequest ModifyOrderRequest,
 ) (ModifyAction, error) {
-	priceWire, err := floatToWire(modifyRequest.Order.Price)
+	asset := e.info.NameToAsset(modifyRequest.Order.Coin)
+	isSpot := asset >= 10000
+
+	priceWire, err := priceToWire(modifyRequest.Order.Price, asset, e.info, isSpot)
 	if err != nil {
 		return ModifyAction{}, fmt.Errorf("failed to wire price: %w", err)
 	}
 
-	sizeWire, err := floatToWire(modifyRequest.Order.Size)
+	sizeWire, err := sizeToWireWithAsset(modifyRequest.Order.Size, asset, e.info)
 	if err != nil {
 		return ModifyAction{}, fmt.Errorf("failed to wire size: %w", err)
 	}
@@ -185,7 +191,7 @@ func newModifyOrderAction(
 	if modifyRequest.Order.OrderType.Limit != nil {
 		orderTypeWire.Limit = &LimitOrderTypeWire{Tif: modifyRequest.Order.OrderType.Limit.Tif}
 	} else if modifyRequest.Order.OrderType.Trigger != nil {
-		triggerPxWire, err := floatToWire(modifyRequest.Order.OrderType.Trigger.TriggerPx)
+		triggerPxWire, err := priceToWire(modifyRequest.Order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot)
 		if err != nil {
 			return ModifyAction{}, fmt.Errorf("failed to wire trigger price: %w", err)
 		}
@@ -343,6 +349,7 @@ func (e *Exchange) MarketOpen(
 
 // MarketOpenWithSLTP opens a position and places either a Stop-Loss (isTP=false) or Take-Profit (isTP=true)
 // trigger in a single grouped action. The trigger is reduce-only and market-on-trigger.
+// Full-position size is used for the trigger. For partial size, use MarketOpenWithSLTPPartial.
 func (e *Exchange) MarketOpenWithSLTP(
 	name string,
 	isBuy bool,
@@ -351,6 +358,24 @@ func (e *Exchange) MarketOpenWithSLTP(
 	slippage float64,
 	tpslPercent float64, // e.g., 0.10 means 10%
 	isTP bool,
+	cloidOpen *string,
+	cloidTPSL *string,
+	builder *BuilderInfo,
+) (result *APIResponse[OrderResponse], err error) {
+	return e.MarketOpenWithSLTPPartial(name, isBuy, sz, px, slippage, tpslPercent, isTP, nil, cloidOpen, cloidTPSL, builder)
+}
+
+// MarketOpenWithSLTPPartial is like MarketOpenWithSLTP but allows specifying a partial TP/SL size via tpslSize.
+// If tpslSize is nil, the trigger uses the full position size.
+func (e *Exchange) MarketOpenWithSLTPPartial(
+	name string,
+	isBuy bool,
+	sz float64,
+	px *float64,
+	slippage float64,
+	tpslPercent float64,
+	isTP bool,
+	tpslSize *float64,
 	cloidOpen *string,
 	cloidTPSL *string,
 	builder *BuilderInfo,
@@ -377,6 +402,12 @@ func (e *Exchange) MarketOpenWithSLTP(
 		}
 	}
 
+	// Decide TP/SL size
+	triggerSize := sz
+	if tpslSize != nil {
+		triggerSize = *tpslSize
+	}
+
 	// Build orders: 1) IOC open; 2) TP/SL trigger reduce-only
 	openOrder := CreateOrderRequest{
 		Coin:          name,
@@ -392,7 +423,7 @@ func (e *Exchange) MarketOpenWithSLTP(
 		Coin:          name,
 		IsBuy:         !isBuy,    // Close direction
 		Price:         triggerPx, // included per wire schema, though ignored when isMarket=true
-		Size:          sz,
+		Size:          triggerSize,
 		ReduceOnly:    true,
 		OrderType:     OrderType{Trigger: &TriggerOrderType{TriggerPx: triggerPx, IsMarket: true, Tpsl: map[bool]string{true: "tp", false: "sl"}[isTP]}},
 		ClientOrderID: cloidTPSL,
