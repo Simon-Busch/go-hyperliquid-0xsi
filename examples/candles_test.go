@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Simon-Busch/go-hyperliquid-0xsi"
 	"github.com/joho/godotenv"
-	"github.com/sonirico/go-hyperliquid"
 )
 
 func TestCandlesSnapshot(t *testing.T) {

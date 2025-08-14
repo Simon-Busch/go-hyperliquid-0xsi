@@ -3,9 +3,10 @@ package examples
 import (
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/Simon-Busch/go-hyperliquid-0xsi"
 	"github.com/joho/godotenv"
-	"github.com/sonirico/go-hyperliquid"
 )
 
 func TestOrder(t *testing.T) {
@@ -537,6 +538,8 @@ func TestShortSOLLeverageUpdateAndClose(t *testing.T) {
 		t.Fatalf("Failed to open short %s position after slippage escalation attempts", coin)
 	}
 
+	time.Sleep(3 * time.Second)
+
 	// Step 3: Update leverage to 3x (cross)
 	t.Log("Updating SOL leverage to 3x (cross)")
 	_, err = exchange.UpdateLeverage(3, coin, true)
@@ -564,6 +567,131 @@ func TestShortSOLLeverageUpdateAndClose(t *testing.T) {
 	if duringSOL.Leverage.Value != 3 {
 		t.Fatalf("expected leverage 3x, got %dx", duringSOL.Leverage.Value)
 	}
+	time.Sleep(3 * time.Second)
+
+	// Step 5: Close the position with slippage escalation if needed
+	t.Log("Closing SOL position")
+	closed := false
+	for _, s := range escalations {
+		closeRes, err := exchange.MarketClose(coin, nil, nil, s, nil, nil)
+		if err != nil {
+			t.Logf("MarketClose failed with slippage %.2f: %v", s, err)
+			continue
+		}
+		t.Logf("Close attempt result (slippage=%.2f): %+v", s, closeRes)
+
+		// Verify closed or size zero
+		afterCloseCheck, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+		if err != nil {
+			t.Fatalf("Failed to get user state after close attempt: %v", err)
+		}
+		var posAfter *hyperliquid.Position
+		for _, ap := range afterCloseCheck.AssetPositions {
+			if ap.Position.Coin == coin {
+				posAfter = &ap.Position
+				break
+			}
+		}
+		if posAfter == nil {
+			closed = true
+			break
+		}
+		sizeFloat, err := strconv.ParseFloat(posAfter.Szi, 64)
+		if err == nil && sizeFloat == 0 {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		t.Fatalf("Failed to close SOL position after slippage escalation attempts")
+	}
+
+	// Step 6: Check user state after
+	t.Log("[After] Checking user state after closing SOL position")
+	afterState, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+	if err != nil {
+		t.Fatalf("Failed to get user state (after): %v", err)
+	}
+	var afterSOL *hyperliquid.Position
+	for _, ap := range afterState.AssetPositions {
+		if ap.Position.Coin == coin {
+			afterSOL = &ap.Position
+			break
+		}
+	}
+	if afterSOL != nil {
+		sizeFloat, err := strconv.ParseFloat(afterSOL.Szi, 64)
+		if err != nil {
+			t.Logf("Warning: could not parse SOL size after close: %v", err)
+		} else if sizeFloat != 0 {
+			t.Fatalf("expected SOL position size 0 after close, got %f", sizeFloat)
+		} else {
+			t.Log("[After] SOL position size is 0 (closed)")
+		}
+	} else {
+		t.Log("[After] SOL position removed (no active position)")
+	}
+}
+
+func TestWeirdSizeAndClose(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	coin := "SOL"
+	slippage := 0.01
+
+	// Step 1: Check user state before
+	t.Log("[Before] Checking user state before opening short SOL position")
+	beforeState, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+	if err != nil {
+		t.Fatalf("Failed to get user state (before): %v", err)
+	}
+	var beforeSOL *hyperliquid.Position
+	for _, ap := range beforeState.AssetPositions {
+		if ap.Position.Coin == coin {
+			beforeSOL = &ap.Position
+			break
+		}
+	}
+	if beforeSOL != nil {
+		t.Logf("[Before] Existing SOL position - Size: %s, Lev: %dx", beforeSOL.Szi, beforeSOL.Leverage.Value)
+	} else {
+		t.Log("[Before] No existing SOL position")
+	}
+
+	// Step 2: Open a short position (sell) with slippage escalation if needed
+	size := 6.7844564847 // modest size for test liquidity
+	escalations := []float64{slippage, 0.03, 0.05, 0.1, 0.2}
+	var opened bool
+	for _, s := range escalations {
+		t.Logf("Opening short position on %s with size %f (slippage=%.2f)", coin, size, s)
+		openRes, err := exchange.MarketOpen(coin, false /* isBuy=false => short */, size, nil, s, nil, nil)
+		if err != nil {
+			t.Logf("MarketOpen short failed with slippage %.2f: %v", s, err)
+			continue
+		}
+		t.Logf("Short open attempt result: %+v", openRes)
+
+		// Verify position exists after open attempt
+		afterOpenState, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+		if err != nil {
+			t.Fatalf("Failed to get user state after open attempt: %v", err)
+		}
+		for _, ap := range afterOpenState.AssetPositions {
+			if ap.Position.Coin == coin {
+				opened = true
+				break
+			}
+		}
+		if opened {
+			break
+		}
+	}
+	if !opened {
+		t.Fatalf("Failed to open short %s position after slippage escalation attempts", coin)
+	}
+
+	time.Sleep(3 * time.Second)
 
 	// Step 5: Close the position with slippage escalation if needed
 	t.Log("Closing SOL position")
@@ -772,4 +900,293 @@ func TestOpenPositionAndCancelCloseOrder(t *testing.T) {
 	}
 
 	t.Log("Test completed: Position opened, close order placed and cancelled, position still exists, then properly closed")
+}
+
+func TestOpenPositionWithStopLossMinus10Percent(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	coin := "BTC"
+	isBuy := true
+	size := 0.001
+	slippage := 0.01
+	slPercent := 0.10 // 10%
+
+	// Open with SL in one grouped action
+	resp, err := exchange.MarketOpenWithSLTP(coin, isBuy, size, nil, slippage, slPercent, false, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("MarketOpenWithSLTP failed: %v", err)
+	}
+	if !resp.Ok {
+		t.Fatalf("MarketOpenWithSLTP not ok: %s", resp.Err)
+	}
+
+	statuses := resp.Data.Statuses
+	if len(statuses) < 2 {
+		t.Fatalf("expected 2 statuses (open, SL), got %d", len(statuses))
+	}
+
+	// // One should be filled (open IOC), the other likely resting (SL trigger)
+	// var slOrderID int64
+	// for _, mv := range statuses {
+	// 	if mv.Type() != "object" {
+	// 		continue
+	// 	}
+	// 	var st hyperliquid.OrderStatus
+	// 	if err := mv.Parse(&st); err != nil {
+	// 		t.Fatalf("failed to parse status: %v", err)
+	// 	}
+	// 	if st.Resting != nil {
+	// 		// store potential SL oid for cleanup
+	// 		slOrderID = st.Resting.Oid
+	// 	}
+	// }
+
+	// // Verify position exists
+	// state, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+	// if err != nil {
+	// 	t.Fatalf("failed to fetch user state: %v", err)
+	// }
+	// var pos *hyperliquid.Position
+	// for _, ap := range state.AssetPositions {
+	// 	if ap.Position.Coin == coin {
+	// 		pos = &ap.Position
+	// 		break
+	// 	}
+	// }
+	// if pos == nil {
+	// 	t.Fatalf("expected %s position after open", coin)
+	// }
+	// t.Logf("Opened position on %s: size=%s lev=%dx", coin, pos.Szi, pos.Leverage.Value)
+
+	// // Cleanup: cancel SL order if we captured an oid
+	// if slOrderID != 0 {
+	// 	if _, err := exchange.Cancel(coin, slOrderID); err != nil {
+	// 		t.Logf("warning: failed to cancel SL order %d: %v", slOrderID, err)
+	// 	}
+	// }
+
+	// // Close the position
+	// if _, err := exchange.MarketClose(coin, nil, nil, slippage, nil, nil); err != nil {
+	// 	t.Fatalf("MarketClose failed: %v", err)
+	// }
+}
+
+func TestOpenPositionWithTakeProfitPlus10Percent(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	coin := "SOL"
+	isBuy := true
+	size := 1.0
+	slippage := 0.01
+	slPercent := 0.10 // 10%
+
+	// Open with SL in one grouped action
+	resp, err := exchange.MarketOpenWithSLTP(coin, isBuy, size, nil, slippage, slPercent, true, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("MarketOpenWithSLTP failed: %v", err)
+	}
+	if !resp.Ok {
+		t.Fatalf("MarketOpenWithSLTP not ok: %s", resp.Err)
+	}
+
+	statuses := resp.Data.Statuses
+	if len(statuses) < 2 {
+		t.Fatalf("expected 2 statuses (open, SL), got %d", len(statuses))
+	}
+
+	// // Close the position to clean up
+	// if _, err := exchange.MarketClose(coin, nil, nil, slippage, nil, nil); err != nil {
+	// 	t.Fatalf("MarketClose failed: %v", err)
+	// }
+}
+
+func TestOpenPositionWithPartialStopLoss(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	coin := "BTC"
+	isBuy := true
+	size := 0.002    // open size
+	partial := 0.001 // 50% SL size
+	slippage := 0.01
+	slPercent := 0.10 // 10%
+
+	resp, err := exchange.MarketOpenWithSLTPPartial(coin, isBuy, size, nil, slippage, slPercent, false /* isTP */, &partial, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("MarketOpenWithSLTPPartial failed: %v", err)
+	}
+	if !resp.Ok {
+		t.Fatalf("MarketOpenWithSLTPPartial not ok: %s", resp.Err)
+	}
+
+	statuses := resp.Data.Statuses
+	if len(statuses) < 2 {
+		t.Fatalf("expected at least 2 statuses (filled open, trigger token), got %d", len(statuses))
+	}
+
+	var hasFilled bool
+	var hasWaiting bool
+	for _, mv := range statuses {
+		typ := mv.Type()
+		if typ == "object" {
+			var st hyperliquid.OrderStatus
+			if err := mv.Parse(&st); err == nil && st.Filled != nil {
+				hasFilled = true
+			}
+		}
+		if typ == "string" {
+			hasWaiting = true
+		}
+	}
+	if !hasFilled || !hasWaiting {
+		t.Fatalf("expected filled open and waiting trigger, got hasFilled=%v hasWaiting=%v", hasFilled, hasWaiting)
+	}
+}
+
+func TestOpenLongSOLWithLeverageAndTPandSL(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	coin := "ETH"
+	size := 2.0
+	tpslPercent := 0.10 // 10%
+	slippage := 0.05
+
+	// Compute the intended execution price for opening
+	openPx, err := exchange.SlippagePrice(coin, true, slippage, nil)
+	if err != nil {
+		t.Fatalf("SlippagePrice failed: %v", err)
+	}
+
+	// Compute trigger prices relative to open price and ensure they conform to tick size
+	tpPxRaw := openPx * (1 + tpslPercent) // TP above entry for long position
+	slPxRaw := openPx * (1 - tpslPercent) // SL below entry for long position
+
+	// Use PriceToWire to ensure proper tick size compliance for asset 4 (ETH)
+	tpPxWire, err := hyperliquid.PriceToWire(tpPxRaw, 4, exchange.GetInfo(), false) // asset 4, not spot
+	if err != nil {
+		t.Fatalf("Failed to format TP price: %v", err)
+	}
+	slPxWire, err := hyperliquid.PriceToWire(slPxRaw, 4, exchange.GetInfo(), false) // asset 4, not spot
+	if err != nil {
+		t.Fatalf("Failed to format SL price: %v", err)
+	}
+
+	// Parse back to float for the orders
+	tpPx, err := strconv.ParseFloat(tpPxWire, 64)
+	if err != nil {
+		t.Fatalf("Failed to parse TP price: %v", err)
+	}
+	slPx, err := strconv.ParseFloat(slPxWire, 64)
+	if err != nil {
+		t.Fatalf("Failed to parse SL price: %v", err)
+	}
+
+	t.Logf("Open price: %f", openPx)
+	t.Logf("TP price: %f", tpPx)
+	t.Logf("SL price: %f", slPx)
+
+	// Build orders: 1) IOC open; 2) TP/SL trigger reduce-only
+	openOrder := hyperliquid.CreateOrderRequest{
+		Coin:          coin,
+		IsBuy:         true,
+		Price:         openPx,
+		Size:          size,
+		ReduceOnly:    false,
+		OrderType:     hyperliquid.OrderType{Limit: &hyperliquid.LimitOrderType{Tif: hyperliquid.TifIoc}},
+		ClientOrderID: nil,
+	}
+
+	tpOrder := hyperliquid.CreateOrderRequest{
+		Coin:          coin,
+		IsBuy:         false, // Close direction
+		Price:         tpPx,  // Use the calculated TP price
+		Size:          size,
+		ReduceOnly:    true,
+		OrderType:     hyperliquid.OrderType{Trigger: &hyperliquid.TriggerOrderType{TriggerPx: tpPx, IsMarket: true, Tpsl: "tp"}},
+		ClientOrderID: nil,
+	}
+
+	slOrder := hyperliquid.CreateOrderRequest{
+		Coin:          coin,
+		IsBuy:         false, // Close direction
+		Price:         slPx,  // Use the calculated SL price
+		Size:          size,
+		ReduceOnly:    true,
+		OrderType:     hyperliquid.OrderType{Trigger: &hyperliquid.TriggerOrderType{TriggerPx: slPx, IsMarket: true, Tpsl: "sl"}},
+		ClientOrderID: nil,
+	}
+
+	// Use normalTpsl grouping to align with trigger order expectations
+	resp, err := exchange.BulkOrdersWithGrouping([]hyperliquid.CreateOrderRequest{openOrder, tpOrder, slOrder}, hyperliquid.GroupingNormalTpsl, nil)
+	if err != nil {
+		t.Fatalf("Placing orders failed: %v", err)
+	}
+	if !resp.Ok {
+		t.Fatalf("Orders not ok: %s", resp.Err)
+	}
+
+	t.Logf("Successfully placed open order with TP/SL triggers")
+
+}
+
+func TestMarketOpenWithCloid(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t) // exchange used for setup only
+
+	t.Log("Market open method is available and ready to use")
+
+	// Example usage:
+	name := "BTC"
+	isBuy := false
+	sz := 0.001
+	slippage := 0.01 // 1%
+
+	// cloid should be a 128-bit hex string according to Hyperliquid docs
+	cloid := "0x1234567890abcdef1234567890abcdef"
+
+	result, err := exchange.MarketOpen(name, isBuy, sz, nil, slippage, &cloid, nil)
+	if err != nil {
+		t.Fatalf("MarketOpen failed: %v", err)
+	}
+	t.Logf("Market open result: %+v", result)
+}
+
+func TestGetCompletePositionSummary(t *testing.T) {
+	godotenv.Overload()
+	exchange := newTestExchange(t)
+
+	// Get user state (positions)
+	userState, err := exchange.GetInfo().UserState(exchange.GetAccountAddr())
+	if err != nil {
+		t.Fatalf("Failed to get user state: %v", err)
+	}
+
+	// Get open orders (TP/SL)
+	openOrders, err := exchange.GetInfo().OpenOrders(exchange.GetAccountAddr())
+	if err != nil {
+		t.Fatalf("Failed to get open orders: %v", err)
+	}
+
+	t.Logf("=== POSITIONS ===")
+	for _, ap := range userState.AssetPositions {
+		pos := ap.Position
+		if pos.Szi != "0" { // Only show non-zero positions
+			t.Logf("Position: %s | Size: %s | Entry: %s | PnL: %s | Leverage: %dx",
+				pos.Coin, pos.Szi, *pos.EntryPx, pos.UnrealizedPnl, pos.Leverage.Value)
+		}
+	}
+
+	t.Logf("=== OPEN ORDERS (TP/SL) ===")
+	for _, order := range openOrders {
+		t.Logf("Order: %s | Side: %s | Size: %f | Price: %f | OID: %d",
+			order.Coin, order.Side, order.Size, order.LimitPx, order.Oid)
+	}
+
+	t.Logf("=== MARGIN SUMMARY ===")
+	t.Logf("Account Value: %s", userState.MarginSummary.AccountValue)
+	t.Logf("Margin Used: %s", userState.MarginSummary.TotalMarginUsed)
+	t.Logf("Net Liquidation: %s", userState.MarginSummary.TotalNtlPos)
 }

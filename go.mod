@@ -1,4 +1,4 @@
-module github.com/Simon-Busch/go-hyperliquid
+module github.com/Simon-Busch/go-hyperliquid-0xsi
 
 go 1.23.0
 
@@ -24,10 +24,7 @@ require (
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
-	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/supranational/blst v0.3.15 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect

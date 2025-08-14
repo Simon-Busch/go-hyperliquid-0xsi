@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/Simon-Busch/go-hyperliquid-0xsi"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/joho/godotenv"
-	"github.com/sonirico/go-hyperliquid"
 )
 
 func init() {
