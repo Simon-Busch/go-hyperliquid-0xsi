@@ -1,6 +1,7 @@
 package examples
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -1165,7 +1166,7 @@ func TestGetCompletePositionSummary(t *testing.T) {
 	}
 
 	// Get open orders (TP/SL)
-	openOrders, err := exchange.GetInfo().OpenOrders(exchange.GetAccountAddr())
+	openOrders, err := exchange.GetInfo().FrontendOpenOrders(exchange.GetAccountAddr())
 	if err != nil {
 		t.Fatalf("Failed to get open orders: %v", err)
 	}
@@ -1181,6 +1182,7 @@ func TestGetCompletePositionSummary(t *testing.T) {
 
 	t.Logf("=== OPEN ORDERS (TP/SL) ===")
 	for _, order := range openOrders {
+		fmt.Printf("raw Order: %+v\n", order)
 		t.Logf("Order: %s | Side: %s | Size: %f | Price: %f | OID: %d",
 			order.Coin, order.Side, order.Size, order.LimitPx, order.Oid)
 	}
