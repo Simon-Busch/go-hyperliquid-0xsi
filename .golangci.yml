@@ -16,7 +16,7 @@ linters-settings:
   lll:
     line-length: 140
   goimports:
-    local-prefixes: github.com/sonirico/go-hyperliquid
+    local-prefixes: github.com/Simon-Busch/go-hyperliquid-0xsi
   gocritic:
     enabled-tags:
       - diagnostic
