@@ -95,12 +95,12 @@ func sizeToWireWithAsset(x float64, asset int, info *Info) (string, error) {
 	return result, nil
 }
 
-// priceToWire converts a float64 price to a wire-compatible string format
+// PriceToWire converts a float64 price to a wire-compatible string format
 // following Hyperliquid's price constraints:
 // - Up to 5 significant figures
 // - No more than MAX_DECIMALS - szDecimals decimal places
 // - MAX_DECIMALS is 6 for perps, 8 for spot
-func priceToWire(x float64, asset int, info *Info, isSpot bool) (string, error) {
+func PriceToWire(x float64, asset int, info *Info, isSpot bool) (string, error) {
 	// Get the asset-specific decimal constraints
 	szDecimals, exists := info.assetToDecimal[asset]
 	if !exists {

@@ -57,7 +57,7 @@ func newCreateOrderActionWithGrouping(
 		asset := e.info.NameToAsset(order.Coin)
 		isSpot := asset >= 10000
 
-		priceWire, err := priceToWire(order.Price, asset, e.info, isSpot)
+		priceWire, err := PriceToWire(order.Price, asset, e.info, isSpot)
 		if err != nil {
 			return OrderAction{}, fmt.Errorf("failed to wire price for order %d: %w", i, err)
 		}
@@ -71,7 +71,7 @@ func newCreateOrderActionWithGrouping(
 		if order.OrderType.Limit != nil {
 			orderTypeWire.Limit = &LimitOrderTypeWire{Tif: order.OrderType.Limit.Tif}
 		} else if order.OrderType.Trigger != nil {
-			triggerPxWire, err := priceToWire(order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot)
+			triggerPxWire, err := PriceToWire(order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot)
 			if err != nil {
 				return OrderAction{}, fmt.Errorf("failed to wire trigger price for order %d: %w", i, err)
 			}
@@ -176,7 +176,7 @@ func newModifyOrderAction(
 	asset := e.info.NameToAsset(modifyRequest.Order.Coin)
 	isSpot := asset >= 10000
 
-	priceWire, err := priceToWire(modifyRequest.Order.Price, asset, e.info, isSpot)
+	priceWire, err := PriceToWire(modifyRequest.Order.Price, asset, e.info, isSpot)
 	if err != nil {
 		return ModifyAction{}, fmt.Errorf("failed to wire price: %w", err)
 	}
@@ -191,7 +191,7 @@ func newModifyOrderAction(
 	if modifyRequest.Order.OrderType.Limit != nil {
 		orderTypeWire.Limit = &LimitOrderTypeWire{Tif: modifyRequest.Order.OrderType.Limit.Tif}
 	} else if modifyRequest.Order.OrderType.Trigger != nil {
-		triggerPxWire, err := priceToWire(modifyRequest.Order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot)
+		triggerPxWire, err := PriceToWire(modifyRequest.Order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot)
 		if err != nil {
 			return ModifyAction{}, fmt.Errorf("failed to wire trigger price: %w", err)
 		}
