@@ -30,7 +30,8 @@ func actionHash(action any, vaultAddress string, nonce int64, expiresAfter *int6
 	var buf bytes.Buffer
 	enc := msgpack.NewEncoder(&buf)
 	enc.SetSortMapKeys(true)
-
+	enc.UseCompactInts(true)
+	
 	err := enc.Encode(action)
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal action: %v", err))
