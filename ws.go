@@ -246,6 +246,7 @@ func (w *WebsocketClient) resubscribeAll() error {
 				Coin:     key.coin,
 				User:     key.user,
 				Interval: key.interval,
+				Dex:      key.dex,
 			}
 			if err := w.sendSubscribe(sub); err != nil {
 				return fmt.Errorf("resubscribe: %w", err)
@@ -297,6 +298,12 @@ func (w *WebsocketClient) SubscribeToOrderbook(coin string, callback func(WSMess
 // SubscribeToAllMids subscribes to all mid prices
 func (w *WebsocketClient) SubscribeToAllMids(callback func(WSMessage)) (int, error) {
 	sub := Subscription{Type: "allMids"}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToAllMidsWithDex subscribes to all mid prices with specific DEX
+func (w *WebsocketClient) SubscribeToAllMidsWithDex(dex string, callback func(WSMessage)) (int, error) {
+	sub := Subscription{Type: "allMids", Dex: dex}
 	return w.Subscribe(sub, callback)
 }
 
@@ -369,14 +376,76 @@ func (w *WebsocketClient) SubscribeToActiveAssetCtx(
 	return w.Subscribe(sub, callback)
 }
 
+// SubscribeToNotification subscribes to notifications for a specific user
+func (w *WebsocketClient) SubscribeToNotification(
+	user string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "notification", User: user}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToActiveAssetData subscribes to active asset data for a user and coin
+func (w *WebsocketClient) SubscribeToActiveAssetData(
+	user, coin string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "activeAssetData", User: user, Coin: coin}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToUserTwapSliceFills subscribes to user TWAP slice fills
+func (w *WebsocketClient) SubscribeToUserTwapSliceFills(
+	user string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "userTwapSliceFills", User: user}
+	return w.Subscribe(sub, callback)
+}
+
+// SubscribeToUserTwapHistory subscribes to user TWAP history
+func (w *WebsocketClient) SubscribeToUserTwapHistory(
+	user string,
+	callback func(WSMessage),
+) (int, error) {
+	sub := Subscription{Type: "userTwapHistory", User: user}
+	return w.Subscribe(sub, callback)
+}
+
 func matchSubscription(key subKey, msg WSMessage) bool {
 	switch key.typ {
+	case "allMids":
+		return msg.Channel == "allMids"
+	case "notification":
+		return msg.Channel == "notification"
+	case "webData2":
+		return msg.Channel == "webData2"
+	case "candle":
+		return msg.Channel == "candle"
 	case "l2Book":
 		return msg.Channel == "l2Book"
 	case "trades":
 		return msg.Channel == "trades"
-	case "candle":
-		return msg.Channel == "candle"
+	case "orderUpdates":
+		return msg.Channel == "orderUpdates"
+	case "userEvents":
+		return msg.Channel == "userEvents"
+	case "userFills":
+		return msg.Channel == "userFills"
+	case "userFundings":
+		return msg.Channel == "userFundings"
+	case "userNonFundingLedgerUpdates":
+		return msg.Channel == "userNonFundingLedgerUpdates"
+	case "activeAssetCtx":
+		return msg.Channel == "activeAssetCtx"
+	case "activeAssetData":
+		return msg.Channel == "activeAssetData"
+	case "userTwapSliceFills":
+		return msg.Channel == "userTwapSliceFills"
+	case "userTwapHistory":
+		return msg.Channel == "userTwapHistory"
+	case "bbo":
+		return msg.Channel == "bbo"
 	default:
 		return false
 	}
