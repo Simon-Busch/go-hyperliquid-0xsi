@@ -16,6 +16,7 @@ type Subscription struct {
 	Coin     string `json:"coin,omitempty"`
 	User     string `json:"user,omitempty"`
 	Interval string `json:"interval,omitempty"`
+	Dex      string `json:"dex,omitempty"`
 }
 
 type subKey struct {
@@ -23,6 +24,7 @@ type subKey struct {
 	coin     string
 	user     string
 	interval string
+	dex      string
 }
 
 func (s Subscription) key() subKey {
@@ -31,6 +33,7 @@ func (s Subscription) key() subKey {
 		coin:     s.Coin,
 		user:     s.User,
 		interval: s.Interval,
+		dex:      s.Dex,
 	}
 }
 
