@@ -95,8 +95,8 @@ type TriggerOrderType struct {
 }
 
 type BuilderInfo struct {
-	Builder string `json:"b"`
-	Fee     int    `json:"f"`
+	Builder string `json:"b" msgpack:"b"`
+	Fee     int    `json:"f" msgpack:"f"`
 }
 
 // Wire format types for order types (used in actions.go)
@@ -313,9 +313,36 @@ type StakingReward struct {
 }
 
 type ReferralState struct {
-	ReferralCode string   `json:"referralCode"`
-	Referrer     string   `json:"referrer"`
-	Referred     []string `json:"referred"`
+	ReferredBy       *ReferredBy    `json:"referredBy,omitempty"`
+	CumVlm           string         `json:"cumVlm"`
+	UnclaimedRewards string         `json:"unclaimedRewards"`
+	ClaimedRewards   string         `json:"claimedRewards"`
+	BuilderRewards   string         `json:"builderRewards"`
+	ReferrerState    *ReferrerState `json:"referrerState,omitempty"`
+	RewardHistory    []interface{}  `json:"rewardHistory"`
+}
+
+type ReferredBy struct {
+	Referrer string `json:"referrer"`
+	Code     string `json:"code"`
+}
+
+type ReferrerState struct {
+	Stage string        `json:"stage"`
+	Data  *ReferrerData `json:"data,omitempty"`
+}
+
+type ReferrerData struct {
+	Code           string           `json:"code"`
+	ReferralStates []ReferralMember `json:"referralStates"`
+}
+
+type ReferralMember struct {
+	CumVlm                       string `json:"cumVlm"`
+	CumRewardedFeesSinceReferred string `json:"cumRewardedFeesSinceReferred"`
+	CumFeesRewardedToReferrer    string `json:"cumFeesRewardedToReferrer"`
+	TimeJoined                   int64  `json:"timeJoined"`
+	User                         string `json:"user"`
 }
 
 type SubAccount struct {
