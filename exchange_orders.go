@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 )
 
 type CreateOrderRequest struct {
@@ -576,23 +575,17 @@ func (e *Exchange) pythonBulkOrders(
 		builderJSON = string(builderBytes)
 	}
 
-	// Find Python script
-	scriptPath := "python_bridge/bulk_orders.py"
-	if _, err := exec.Command("ls", scriptPath).Output(); err != nil {
-		scriptPath = "../python_bridge/bulk_orders.py"
-	}
-
-	// Call Python bridge
-	cmd := exec.Command("python3", scriptPath,
+	// Use embedded Python script
+	output, err := callPythonBridge(
+		bulkOrdersPythonScript,
+		"bulk_orders.py",
 		privateKeyHex,
 		fmt.Sprintf("%t", isMainnet),
 		string(orderRequestsJSON),
 		builderJSON,
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Python bridge: %w\nOutput: %s", err, string(output))
+		return nil, err
 	}
 
 	// Parse response
