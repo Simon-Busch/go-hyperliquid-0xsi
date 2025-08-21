@@ -1,7 +1,10 @@
 package hyperliquid
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os/exec"
 )
 
 type CreateOrderRequest struct {
@@ -142,6 +145,13 @@ func (e *Exchange) BulkOrders(
 	orders []CreateOrderRequest,
 	builder *BuilderInfo,
 ) (result *APIResponse[OrderResponse], err error) {
+	// Use Python bridge when builder is specified for 100% signature compatibility
+	if builder != nil {
+		fmt.Printf("🐍 Using Python bridge for BulkOrders with builder\n")
+		return e.pythonBulkOrders(orders, builder)
+	}
+
+	// Use Go implementation for regular orders
 	action, err := newCreateOrderAction(e, orders, builder)
 	if err != nil {
 		return nil, err
@@ -489,4 +499,119 @@ func (e *Exchange) MarketClose(
 	}
 
 	return OrderStatus{}, fmt.Errorf("position not found for coin: %s", coin)
+}
+
+// pythonBulkOrders calls the Hyperliquid Python SDK bulk_orders function via our bridge script
+func (e *Exchange) pythonBulkOrders(
+	orders []CreateOrderRequest,
+	builder *BuilderInfo,
+) (*APIResponse[OrderResponse], error) {
+	// Convert private key to hex string
+	privateKeyBytes := e.privateKey.D.Bytes()
+	if len(privateKeyBytes) < 32 {
+		padded := make([]byte, 32)
+		copy(padded[32-len(privateKeyBytes):], privateKeyBytes)
+		privateKeyBytes = padded
+	}
+	privateKeyHex := "0x" + hex.EncodeToString(privateKeyBytes)
+
+	// Determine if mainnet
+	isMainnet := e.client.baseURL == MainnetAPIURL
+
+	// Convert Go orders to Python format
+	var orderRequests []map[string]interface{}
+	for _, order := range orders {
+		// Convert OrderType to Python format
+		var orderType map[string]interface{}
+		if order.OrderType.Limit != nil {
+			orderType = map[string]interface{}{
+				"limit": map[string]interface{}{
+					"tif": string(order.OrderType.Limit.Tif),
+				},
+			}
+		} else if order.OrderType.Trigger != nil {
+			orderType = map[string]interface{}{
+				"trigger": map[string]interface{}{
+					"isMarket":  order.OrderType.Trigger.IsMarket,
+					"triggerPx": order.OrderType.Trigger.TriggerPx,
+					"tpsl":      string(order.OrderType.Trigger.Tpsl),
+				},
+			}
+		}
+
+		orderReq := map[string]interface{}{
+			"coin":        order.Coin,
+			"is_buy":      order.IsBuy,
+			"sz":          order.Size,
+			"limit_px":    order.Price,
+			"order_type":  orderType,
+			"reduce_only": order.ReduceOnly,
+		}
+
+		// Add client order ID if provided
+		if order.ClientOrderID != nil {
+			orderReq["cloid"] = *order.ClientOrderID
+		}
+
+		orderRequests = append(orderRequests, orderReq)
+	}
+
+	// Convert orders to JSON
+	orderRequestsJSON, err := json.Marshal(orderRequests)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal order requests: %w", err)
+	}
+
+	// Convert builder to JSON
+	builderJSON := "null"
+	if builder != nil {
+		builderData := map[string]interface{}{
+			"b": builder.Builder,
+			"f": builder.Fee,
+		}
+		builderBytes, err := json.Marshal(builderData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal builder info: %w", err)
+		}
+		builderJSON = string(builderBytes)
+	}
+
+	// Find Python script
+	scriptPath := "python_bridge/bulk_orders.py"
+	if _, err := exec.Command("ls", scriptPath).Output(); err != nil {
+		scriptPath = "../python_bridge/bulk_orders.py"
+	}
+
+	// Call Python bridge
+	cmd := exec.Command("python3", scriptPath,
+		privateKeyHex,
+		fmt.Sprintf("%t", isMainnet),
+		string(orderRequestsJSON),
+		builderJSON,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Python bridge: %w\nOutput: %s", err, string(output))
+	}
+
+	// Parse response
+	var pythonResponse map[string]interface{}
+	if err := json.Unmarshal(output, &pythonResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse Python response: %w\nOutput: %s", err, string(output))
+	}
+
+	// Check for errors
+	if errorMsg, hasError := pythonResponse["error"]; hasError {
+		return nil, fmt.Errorf("Python bridge error: %s", errorMsg)
+	}
+
+	// For now, just convert the response to the expected format by creating a simple struct
+	// The Python response is already in the correct format, so we just need to unmarshal it
+	var result *APIResponse[OrderResponse]
+	if err := json.Unmarshal(output, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse Python response into Go struct: %w\nOutput: %s", err, string(output))
+	}
+
+	return result, nil
 }
