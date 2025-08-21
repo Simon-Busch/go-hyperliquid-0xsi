@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -695,39 +696,9 @@ func (e *Exchange) ApproveAgent(name *string) (*AgentApprovalResponse, string, e
 	return &result, agentKey, nil
 }
 
-// ApproveBuilderFee approves builder fee payment
+// ApproveBuilderFee approves builder fee payment using Python bridge for 100% signature compatibility
 func (e *Exchange) ApproveBuilderFee(builder string, maxFeeRate string) (*ApprovalResponse, error) {
-	timestamp := time.Now().UnixMilli()
-
-	action := ApproveBuilderFeeAction{
-		Type:       "approveBuilderFee",
-		Builder:    builder,
-		MaxFeeRate: maxFeeRate,
-		Nonce:      timestamp,
-	}
-
-	sig, err := SignL1Action(
-		e.privateKey,
-		action,
-		e.vault,
-		timestamp,
-		e.expiresAfter,
-		e.client.baseURL == MainnetAPIURL,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := e.postAction(action, sig, timestamp)
-	if err != nil {
-		return nil, err
-	}
-
-	var result ApprovalResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return e.pythonApproveBuilderFee(builder, maxFeeRate)
 }
 
 // ConvertToMultiSigUser converts account to multi-signature user
@@ -1413,4 +1384,63 @@ func (e *Exchange) MultiSig(
 		return nil, err
 	}
 	return &result, nil
+}
+
+// pythonApproveBuilderFee calls the Hyperliquid Python SDK approve_builder_fee function via our bridge script
+func (e *Exchange) pythonApproveBuilderFee(builder string, maxFeeRate string) (*ApprovalResponse, error) {
+	// Convert private key to hex string
+	privateKeyBytes := e.privateKey.D.Bytes()
+	if len(privateKeyBytes) < 32 {
+		padded := make([]byte, 32)
+		copy(padded[32-len(privateKeyBytes):], privateKeyBytes)
+		privateKeyBytes = padded
+	}
+	privateKeyHex := "0x" + hex.EncodeToString(privateKeyBytes)
+
+	// Determine if mainnet
+	isMainnet := e.client.baseURL == MainnetAPIURL
+
+	// Find Python script
+	scriptPath := "python_bridge/approve_builder_fee.py"
+	if _, err := exec.Command("ls", scriptPath).Output(); err != nil {
+		scriptPath = "../python_bridge/approve_builder_fee.py"
+	}
+
+	// Call Python bridge
+	cmd := exec.Command("python3", scriptPath,
+		privateKeyHex,
+		fmt.Sprintf("%t", isMainnet),
+		builder,
+		maxFeeRate,
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Python bridge: %w\nOutput: %s", err, string(output))
+	}
+
+	// Parse response
+	var pythonResponse map[string]interface{}
+	if err := json.Unmarshal(output, &pythonResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse Python response: %w\nOutput: %s", err, string(output))
+	}
+
+	// Check for errors
+	if errorMsg, hasError := pythonResponse["error"]; hasError {
+		return nil, fmt.Errorf("Python bridge error: %s", errorMsg)
+	}
+
+	// Convert Python response to Go ApprovalResponse format
+	result := &ApprovalResponse{
+		Status: pythonResponse["status"].(string),
+	}
+
+	// Check if there's an error field in the response
+	if response, hasResponse := pythonResponse["response"]; hasResponse {
+		if responseStr, isString := response.(string); isString {
+			result.Error = responseStr
+		}
+	}
+
+	return result, nil
 }
