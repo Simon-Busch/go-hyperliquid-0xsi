@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -1400,23 +1399,17 @@ func (e *Exchange) pythonApproveBuilderFee(builder string, maxFeeRate string) (*
 	// Determine if mainnet
 	isMainnet := e.client.baseURL == MainnetAPIURL
 
-	// Find Python script
-	scriptPath := "python_bridge/approve_builder_fee.py"
-	if _, err := exec.Command("ls", scriptPath).Output(); err != nil {
-		scriptPath = "../python_bridge/approve_builder_fee.py"
-	}
-
-	// Call Python bridge
-	cmd := exec.Command("python3", scriptPath,
+	// Use embedded Python script
+	output, err := callPythonBridge(
+		approveBuilderFeePythonScript,
+		"approve_builder_fee.py",
 		privateKeyHex,
 		fmt.Sprintf("%t", isMainnet),
 		builder,
 		maxFeeRate,
 	)
-
-	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("failed to call Python bridge: %w\nOutput: %s", err, string(output))
+		return nil, err
 	}
 
 	// Parse response
