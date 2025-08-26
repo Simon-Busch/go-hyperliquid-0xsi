@@ -12,3 +12,6 @@ var bulkOrdersPythonScript string
 
 //go:embed python_bridge/approve_builder_fee.py
 var approveBuilderFeePythonScript string
+
+//go:embed python_bridge/bulk_orders_grouping.py
+var bulkOrdersWithGroupingPythonScript string
