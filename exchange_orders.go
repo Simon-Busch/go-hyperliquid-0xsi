@@ -165,6 +165,13 @@ func (e *Exchange) BulkOrdersWithGrouping(
 	grouping Grouping,
 	builder *BuilderInfo,
 ) (result *APIResponse[OrderResponse], err error) {
+	// Use Python bridge when builder is specified for 100% signature compatibility
+	if builder != nil {
+		fmt.Printf("🐍 Using Python bridge for BulkOrdersWithGrouping with builder\n")
+		return e.pythonBulkOrdersWithGrouping(orders, grouping, builder)
+	}
+
+	// Use Go implementation for regular orders
 	action, err := newCreateOrderActionWithGrouping(e, orders, builder, grouping)
 	if err != nil {
 		return nil, err
@@ -583,6 +590,117 @@ func (e *Exchange) pythonBulkOrders(
 		fmt.Sprintf("%t", isMainnet),
 		string(orderRequestsJSON),
 		builderJSON,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var pythonResponse map[string]interface{}
+	if err := json.Unmarshal(output, &pythonResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse Python response: %w\nOutput: %s", err, string(output))
+	}
+
+	// Check for errors
+	if errorMsg, hasError := pythonResponse["error"]; hasError {
+		return nil, fmt.Errorf("Python bridge error: %s", errorMsg)
+	}
+
+	// For now, just convert the response to the expected format by creating a simple struct
+	// The Python response is already in the correct format, so we just need to unmarshal it
+	var result *APIResponse[OrderResponse]
+	if err := json.Unmarshal(output, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse Python response into Go struct: %w\nOutput: %s", err, string(output))
+	}
+
+	return result, nil
+}
+
+// pythonBulkOrdersWithGrouping calls the Hyperliquid Python SDK bulk_orders function with grouping via our bridge script
+func (e *Exchange) pythonBulkOrdersWithGrouping(
+	orders []CreateOrderRequest,
+	grouping Grouping,
+	builder *BuilderInfo,
+) (*APIResponse[OrderResponse], error) {
+	// Convert private key to hex string
+	privateKeyBytes := e.privateKey.D.Bytes()
+	if len(privateKeyBytes) < 32 {
+		padded := make([]byte, 32)
+		copy(padded[32-len(privateKeyBytes):], privateKeyBytes)
+		privateKeyBytes = padded
+	}
+	privateKeyHex := "0x" + hex.EncodeToString(privateKeyBytes)
+
+	// Determine if mainnet
+	isMainnet := e.client.baseURL == MainnetAPIURL
+
+	// Convert Go orders to Python format
+	var orderRequests []map[string]interface{}
+	for _, order := range orders {
+		// Convert OrderType to Python format
+		var orderType map[string]interface{}
+		if order.OrderType.Limit != nil {
+			orderType = map[string]interface{}{
+				"limit": map[string]interface{}{
+					"tif": string(order.OrderType.Limit.Tif),
+				},
+			}
+		} else if order.OrderType.Trigger != nil {
+			orderType = map[string]interface{}{
+				"trigger": map[string]interface{}{
+					"isMarket":  order.OrderType.Trigger.IsMarket,
+					"triggerPx": order.OrderType.Trigger.TriggerPx,
+					"tpsl":      string(order.OrderType.Trigger.Tpsl),
+				},
+			}
+		}
+
+		orderReq := map[string]interface{}{
+			"coin":        order.Coin,
+			"is_buy":      order.IsBuy,
+			"sz":          order.Size,
+			"limit_px":    order.Price,
+			"order_type":  orderType,
+			"reduce_only": order.ReduceOnly,
+		}
+
+		// Add client order ID if provided
+		if order.ClientOrderID != nil {
+			orderReq["cloid"] = *order.ClientOrderID
+		}
+
+		orderRequests = append(orderRequests, orderReq)
+	}
+
+	// Convert orders to JSON
+	orderRequestsJSON, err := json.Marshal(orderRequests)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal order requests: %w", err)
+	}
+
+	// Convert builder to JSON
+	builderJSON := "null"
+	if builder != nil {
+		builderData := map[string]interface{}{
+			"b": builder.Builder,
+			"f": builder.Fee,
+		}
+		builderBytes, err := json.Marshal(builderData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal builder info: %w", err)
+		}
+		builderJSON = string(builderBytes)
+	}
+
+	// Use embedded Python script with grouping
+	output, err := callPythonBridge(
+		bulkOrdersWithGroupingPythonScript,
+		"bulk_orders_grouping.py",
+		privateKeyHex,
+		fmt.Sprintf("%t", isMainnet),
+		string(orderRequestsJSON),
+		builderJSON,
+		string(grouping), // Add grouping parameter
 	)
 	if err != nil {
 		return nil, err
