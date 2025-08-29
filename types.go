@@ -226,6 +226,8 @@ type Fill struct {
 	StartPosition string `json:"startPosition"`
 	Size          string `json:"sz"`
 	Time          int64  `json:"time"`
+	Fee           string `json:"fee"`
+	FeeToken      string `json:"feeToken"`
 }
 
 type FundingHistory struct {
