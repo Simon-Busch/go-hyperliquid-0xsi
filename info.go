@@ -423,6 +423,23 @@ func (i *Info) QueryOrderByOid(user string, oid int64) (*OpenOrder, error) {
 	return &result, nil
 }
 
+// QueryFillByOid finds a specific fill by OID from user fills
+// Since there's no direct fill query endpoint, we filter userFills by OID
+func (i *Info) QueryFillByOid(user string, oid int64) (*Fill, error) {
+	fills, err := i.UserFills(user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch user fills: %w", err)
+	}
+
+	for _, fill := range fills {
+		if fill.Oid == oid {
+			return &fill, nil
+		}
+	}
+
+	return nil, fmt.Errorf("fill with OID %d not found for user %s", oid, user)
+}
+
 func (i *Info) QueryOrderByCloid(user, cloid string) (*OpenOrder, error) {
 	resp, err := i.client.post("/info", map[string]any{
 		"type": "orderStatus",
