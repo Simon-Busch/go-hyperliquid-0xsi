@@ -406,7 +406,34 @@ func (i *Info) UserStakingRewards(address string) ([]StakingReward, error) {
 	return result, nil
 }
 
-func (i *Info) QueryOrderByOid(user string, oid int64) (*OpenOrder, error) {
+// OrderStatusResponse represents the actual response from the orderStatus endpoint
+type OrderStatusResponse struct {
+	Status string `json:"status"`
+	Order  struct {
+		Order struct {
+			Coin             string  `json:"coin"`
+			Side             string  `json:"side"`
+			LimitPx          string  `json:"limitPx"`
+			Sz               string  `json:"sz"`
+			Oid              int64   `json:"oid"`
+			Timestamp        int64   `json:"timestamp"`
+			TriggerCondition string  `json:"triggerCondition"`
+			IsTrigger        bool    `json:"isTrigger"`
+			TriggerPx        string  `json:"triggerPx"`
+			Children         []any   `json:"children"`
+			IsPositionTpsl   bool    `json:"isPositionTpsl"`
+			ReduceOnly       bool    `json:"reduceOnly"`
+			OrderType        string  `json:"orderType"`
+			OrigSz           string  `json:"origSz"`
+			Tif              *string `json:"tif"`
+			Cloid            *string `json:"cloid"`
+		} `json:"order"`
+		Status          string `json:"status"`
+		StatusTimestamp int64  `json:"statusTimestamp"`
+	} `json:"order"`
+}
+
+func (i *Info) QueryOrderByOid(user string, oid int64) (*OrderStatusResponse, error) {
 	resp, err := i.client.post("/info", map[string]any{
 		"type": "orderStatus",
 		"user": user,
@@ -416,10 +443,11 @@ func (i *Info) QueryOrderByOid(user string, oid int64) (*OpenOrder, error) {
 		return nil, fmt.Errorf("failed to fetch order status: %w", err)
 	}
 
-	var result OpenOrder
+	var result OrderStatusResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal order status: %w", err)
 	}
+
 	return &result, nil
 }
 
