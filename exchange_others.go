@@ -189,19 +189,19 @@ func getAssetTickSize(assetID int) float64 {
 func validateAndAdjustPrice(price float64, assetID int) (float64, error) {
 	tickSize := getAssetTickSize(assetID)
 
-	// Check if price is divisible by tick size
-	if math.Mod(price, tickSize) != 0 {
-		// Round to nearest tick size
-		adjustedPrice := roundToTickSize(price, tickSize)
+	// Round to nearest tick size first to handle floating-point precision issues
+	adjustedPrice := roundToTickSize(price, tickSize)
 
+	// Check if the adjusted price is significantly different from the original
+	// Use a small epsilon to account for floating-point precision
+	epsilon := tickSize * 0.0001 // Very small tolerance
+	if math.Abs(adjustedPrice-price) > epsilon {
 		// Log the adjustment for debugging
 		fmt.Printf("WARNING: Price %.8f adjusted to %.8f to meet tick size %.8f for asset %d\n",
 			price, adjustedPrice, tickSize, assetID)
-
-		return adjustedPrice, nil
 	}
 
-	return price, nil
+	return adjustedPrice, nil
 }
 
 // ScheduleCancel schedules cancellation of all open orders
@@ -1484,6 +1484,54 @@ func (e *Exchange) pythonApproveBuilderFee(builder string, maxFeeRate string) (*
 func (e *Exchange) ValidatePriceForAsset(price float64, assetName string) (float64, error) {
 	assetID := e.info.NameToAsset(assetName)
 	return validateAndAdjustPrice(price, assetID)
+}
+
+// ValidateTPSLPrice validates price specifically for TP/SL trigger orders
+// TP/SL orders have different price validation requirements than regular orders
+func (e *Exchange) ValidateTPSLPrice(price float64, assetName string, isTP bool) (float64, error) {
+	// First, validate basic tick size compliance
+	validatedPrice, err := e.ValidatePriceForAsset(price, assetName)
+	if err != nil {
+		return 0, fmt.Errorf("basic price validation failed: %w", err)
+	}
+
+	// Get asset info for significant figures validation
+	assetID := e.info.NameToAsset(assetName)
+	szDecimals := e.info.assetToDecimal[assetID]
+	isSpot := assetID >= 10000
+
+	// Apply proper price formatting according to Hyperliquid docs:
+	// - Up to 5 significant figures
+	// - No more than MAX_DECIMALS - szDecimals decimal places
+	// - MAX_DECIMALS is 6 for perps, 8 for spot
+	formattedPrice := formatPriceToTickSize(validatedPrice, szDecimals, isSpot)
+
+	// Get current market data to validate TP/SL price ranges
+	mids, err := e.info.AllMids()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get market data: %w", err)
+	}
+
+	midPriceStr, exists := mids[assetName]
+	if !exists {
+		return 0, fmt.Errorf("no mid price found for %s", assetName)
+	}
+
+	midPrice, err := strconv.ParseFloat(midPriceStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse mid price: %w", err)
+	}
+
+	// Log the validation for debugging
+	fmt.Printf("TP/SL Price Validation for %s:\n", assetName)
+	fmt.Printf("  Mid Price: %f\n", midPrice)
+	fmt.Printf("  TP/SL Price: %f\n", formattedPrice)
+	fmt.Printf("  Type: %s\n", map[bool]string{true: "TP", false: "SL"}[isTP])
+
+	// Additional validation could be added here based on Hyperliquid's specific requirements
+	// For now, we'll rely on the basic tick size and significant figures validation
+
+	return formattedPrice, nil
 }
 
 // GetAssetTickSize returns the tick size for a specific asset
