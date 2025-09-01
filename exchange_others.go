@@ -170,14 +170,24 @@ func roundToTickSize(price, tickSize float64) float64 {
 }
 
 // getAssetTickSize returns the tick size for a specific asset
-// Based on Hyperliquid's tick size rules from the documentation
+// This is a fallback function that provides hardcoded tick sizes
+// The actual implementation should use getAssetTickSizeFromMetadata which calculates dynamically
 func getAssetTickSize(assetID int) float64 {
 	// Perp assets (0-9999) have different tick sizes based on price ranges
 	if assetID < 10000 {
-		// For perps, tick size depends on the asset and price range
-		// This is a simplified mapping - in practice you'd want to fetch this from the API
-		// Common tick sizes: BTC=0.1, ETH=0.01, SOL=0.01, etc.
-		return 0.01 // Default to 0.01 for most perp assets
+		// Common tick sizes from Hyperliquid docs and testing:
+		switch assetID {
+		case 0: // BTC
+			return 0.1
+		case 1: // ETH
+			return 0.01
+		case 2: // SOL
+			return 0.01
+		default:
+			// For other assets, use a reasonable default
+			// This should be replaced with dynamic calculation
+			return 0.01 // Default to 0.01 for most perp assets
+		}
 	}
 
 	// Spot assets (10000+) typically have smaller tick sizes
@@ -187,6 +197,8 @@ func getAssetTickSize(assetID int) float64 {
 // validateAndAdjustPrice ensures the price meets tick size requirements
 // Based on Hyperliquid docs: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
 func validateAndAdjustPrice(price float64, assetID int) (float64, error) {
+	// This function is called from contexts where we don't have access to the Exchange instance
+	// So we use the fallback method for now
 	tickSize := getAssetTickSize(assetID)
 
 	// Round to nearest tick size first to handle floating-point precision issues
@@ -1535,7 +1547,67 @@ func (e *Exchange) ValidateTPSLPrice(price float64, assetName string, isTP bool)
 }
 
 // GetAssetTickSize returns the tick size for a specific asset
+// This uses the API metadata to dynamically calculate tick sizes
 func (e *Exchange) GetAssetTickSize(assetName string) float64 {
 	assetID := e.info.NameToAsset(assetName)
-	return getAssetTickSize(assetID)
+	return e.getAssetTickSizeFromMetadata(assetID)
+}
+
+// getAssetTickSizeFromMetadata calculates tick size dynamically from API metadata
+// Based on Hyperliquid's price formatting rules:
+// - MAX_DECIMALS is 6 for perps, 8 for spot
+// - maxPriceDecimals = MAX_DECIMALS - szDecimals
+// - tickSize = 10^(-maxPriceDecimals)
+func (e *Exchange) getAssetTickSizeFromMetadata(assetID int) float64 {
+	// Get szDecimals from API metadata
+	szDecimals, exists := e.info.assetToDecimal[assetID]
+	if !exists {
+		// Fallback to hardcoded values if metadata not available
+		return e.getAssetTickSizeFallback(assetID)
+	}
+
+	// Determine MAX_DECIMALS based on asset type
+	maxDecimals := 6 // perps
+	if assetID >= 10000 {
+		maxDecimals = 8 // spot
+	}
+
+	// Calculate maxPriceDecimals according to Hyperliquid docs
+	maxPriceDecimals := maxDecimals - szDecimals
+	if maxPriceDecimals < 0 {
+		maxPriceDecimals = 0 // Ensure non-negative
+	}
+
+	// Calculate tick size as the smallest price increment allowed
+	tickSize := math.Pow(10, float64(-maxPriceDecimals))
+
+	// For some assets, the actual tick size might be different from the calculated one
+	// due to specific market requirements. We can check against known values.
+	knownTickSize := e.getAssetTickSizeFallback(assetID)
+
+	// If the calculated tick size is significantly different from known values,
+	// use the known value (this handles edge cases)
+	if math.Abs(tickSize-knownTickSize) > 0.0001 && knownTickSize != 0.01 {
+		// Log this for debugging
+		fmt.Printf("DEBUG: Asset %d calculated tick size %.8f differs from known %.8f, using known\n",
+			assetID, tickSize, knownTickSize)
+		return knownTickSize
+	}
+
+	return tickSize
+}
+
+// getAssetTickSizeFallback provides hardcoded tick sizes for known assets
+// This is used when API metadata is not available or for assets with specific tick sizes
+func (e *Exchange) getAssetTickSizeFallback(assetID int) float64 {
+	switch assetID {
+	case 0: // BTC
+		return 0.1
+	case 1: // ETH
+		return 0.01
+	case 2: // SOL
+		return 0.01
+	default:
+		return 0.01 // Default for most perp assets
+	}
 }
