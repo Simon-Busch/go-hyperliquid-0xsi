@@ -1501,22 +1501,14 @@ func (e *Exchange) ValidatePriceForAsset(price float64, assetName string) (float
 // ValidateTPSLPrice validates price specifically for TP/SL trigger orders
 // TP/SL orders have different price validation requirements than regular orders
 func (e *Exchange) ValidateTPSLPrice(price float64, assetName string, isTP bool) (float64, error) {
-	// First, validate basic tick size compliance
-	validatedPrice, err := e.ValidatePriceForAsset(price, assetName)
-	if err != nil {
-		return 0, fmt.Errorf("basic price validation failed: %w", err)
-	}
-
-	// Get asset info for significant figures validation
+	// Get asset ID for validation
 	assetID := e.info.NameToAsset(assetName)
-	szDecimals := e.info.assetToDecimal[assetID]
-	isSpot := assetID >= 10000
 
-	// Apply proper price formatting according to Hyperliquid docs:
-	// - Up to 5 significant figures
-	// - No more than MAX_DECIMALS - szDecimals decimal places
-	// - MAX_DECIMALS is 6 for perps, 8 for spot
-	formattedPrice := formatPriceToTickSize(validatedPrice, szDecimals, isSpot)
+	// Validate and adjust price for tick size compliance and significant figures
+	validatedPrice, err := validateAndAdjustPrice(price, assetID)
+	if err != nil {
+		return 0, fmt.Errorf("tick size validation failed: %w", err)
+	}
 
 	// Get current market data to validate TP/SL price ranges
 	mids, err := e.info.AllMids()
@@ -1537,13 +1529,13 @@ func (e *Exchange) ValidateTPSLPrice(price float64, assetName string, isTP bool)
 	// Log the validation for debugging
 	fmt.Printf("TP/SL Price Validation for %s:\n", assetName)
 	fmt.Printf("  Mid Price: %f\n", midPrice)
-	fmt.Printf("  TP/SL Price: %f\n", formattedPrice)
+	fmt.Printf("  TP/SL Price: %f\n", validatedPrice)
 	fmt.Printf("  Type: %s\n", map[bool]string{true: "TP", false: "SL"}[isTP])
 
 	// Additional validation could be added here based on Hyperliquid's specific requirements
 	// For now, we'll rely on the basic tick size and significant figures validation
 
-	return formattedPrice, nil
+	return validatedPrice, nil
 }
 
 // GetAssetTickSize returns the tick size for a specific asset
