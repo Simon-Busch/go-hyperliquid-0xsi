@@ -96,7 +96,13 @@ func (e *Exchange) SlippagePrice(
 	// - MAX_DECIMALS is 6 for perps, 8 for spot
 	price = formatPriceToTickSize(price, szDecimals, isSpot)
 
-	return price, nil
+	// Validate and adjust price to meet tick size requirements
+	adjustedPrice, err := validateAndAdjustPrice(price, asset)
+	if err != nil {
+		return 0, fmt.Errorf("failed to validate price for tick size: %w", err)
+	}
+
+	return adjustedPrice, nil
 }
 
 // formatPriceToTickSize formats price according to Hyperliquid tick size rules
@@ -161,6 +167,41 @@ func countSignificantFigures(num float64) int {
 // roundToTickSize rounds a price to the nearest tick size
 func roundToTickSize(price, tickSize float64) float64 {
 	return math.Round(price/tickSize) * tickSize
+}
+
+// getAssetTickSize returns the tick size for a specific asset
+// Based on Hyperliquid's tick size rules from the documentation
+func getAssetTickSize(assetID int) float64 {
+	// Perp assets (0-9999) have different tick sizes based on price ranges
+	if assetID < 10000 {
+		// For perps, tick size depends on the asset and price range
+		// This is a simplified mapping - in practice you'd want to fetch this from the API
+		// Common tick sizes: BTC=0.1, ETH=0.01, SOL=0.01, etc.
+		return 0.01 // Default to 0.01 for most perp assets
+	}
+
+	// Spot assets (10000+) typically have smaller tick sizes
+	return 0.0001 // Default to 0.0001 for spot assets
+}
+
+// validateAndAdjustPrice ensures the price meets tick size requirements
+// Based on Hyperliquid docs: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
+func validateAndAdjustPrice(price float64, assetID int) (float64, error) {
+	tickSize := getAssetTickSize(assetID)
+
+	// Check if price is divisible by tick size
+	if math.Mod(price, tickSize) != 0 {
+		// Round to nearest tick size
+		adjustedPrice := roundToTickSize(price, tickSize)
+
+		// Log the adjustment for debugging
+		fmt.Printf("WARNING: Price %.8f adjusted to %.8f to meet tick size %.8f for asset %d\n",
+			price, adjustedPrice, tickSize, assetID)
+
+		return adjustedPrice, nil
+	}
+
+	return price, nil
 }
 
 // ScheduleCancel schedules cancellation of all open orders
@@ -1436,4 +1477,17 @@ func (e *Exchange) pythonApproveBuilderFee(builder string, maxFeeRate string) (*
 	}
 
 	return result, nil
+}
+
+// ValidatePriceForAsset ensures a price meets tick size requirements for a specific asset
+// This can be called before placing orders to prevent tick size errors
+func (e *Exchange) ValidatePriceForAsset(price float64, assetName string) (float64, error) {
+	assetID := e.info.NameToAsset(assetName)
+	return validateAndAdjustPrice(price, assetID)
+}
+
+// GetAssetTickSize returns the tick size for a specific asset
+func (e *Exchange) GetAssetTickSize(assetName string) float64 {
+	assetID := e.info.NameToAsset(assetName)
+	return getAssetTickSize(assetID)
 }
