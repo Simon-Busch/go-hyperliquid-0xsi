@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 )
 
 type CreateOrderRequest struct {
@@ -512,6 +514,15 @@ func (e *Exchange) pythonBulkOrders(
 	orders []CreateOrderRequest,
 	builder *BuilderInfo,
 ) (*APIResponse[OrderResponse], error) {
+	// Normalize orders before calling the Python bridge
+	normalized := make([]CreateOrderRequest, len(orders))
+	for i, order := range orders {
+		n, err := e.normalizeOrderForBridge(order)
+		if err != nil {
+			return nil, fmt.Errorf("invalid order %d: %w", i, err)
+		}
+		normalized[i] = n
+	}
 	// Convert private key to hex string
 	privateKeyBytes := e.privateKey.D.Bytes()
 	if len(privateKeyBytes) < 32 {
@@ -526,7 +537,7 @@ func (e *Exchange) pythonBulkOrders(
 
 	// Convert Go orders to Python format
 	var orderRequests []map[string]interface{}
-	for _, order := range orders {
+	for _, order := range normalized {
 		// Convert OrderType to Python format
 		var orderType map[string]interface{}
 		if order.OrderType.Limit != nil {
@@ -603,7 +614,7 @@ func (e *Exchange) pythonBulkOrders(
 
 	// Check for errors
 	if errorMsg, hasError := pythonResponse["error"]; hasError {
-		return nil, fmt.Errorf("Python bridge error: %s", errorMsg)
+		return nil, fmt.Errorf("python bridge error: %s", errorMsg)
 	}
 
 	// For now, just convert the response to the expected format by creating a simple struct
@@ -622,6 +633,15 @@ func (e *Exchange) pythonBulkOrdersWithGrouping(
 	grouping Grouping,
 	builder *BuilderInfo,
 ) (*APIResponse[OrderResponse], error) {
+	// Normalize orders before calling the Python bridge
+	normalized := make([]CreateOrderRequest, len(orders))
+	for i, order := range orders {
+		n, err := e.normalizeOrderForBridge(order)
+		if err != nil {
+			return nil, fmt.Errorf("invalid order %d: %w", i, err)
+		}
+		normalized[i] = n
+	}
 	// Convert private key to hex string
 	privateKeyBytes := e.privateKey.D.Bytes()
 	if len(privateKeyBytes) < 32 {
@@ -636,7 +656,7 @@ func (e *Exchange) pythonBulkOrdersWithGrouping(
 
 	// Convert Go orders to Python format
 	var orderRequests []map[string]interface{}
-	for _, order := range orders {
+	for _, order := range normalized {
 		// Convert OrderType to Python format
 		var orderType map[string]interface{}
 		if order.OrderType.Limit != nil {
@@ -714,7 +734,7 @@ func (e *Exchange) pythonBulkOrdersWithGrouping(
 
 	// Check for errors
 	if errorMsg, hasError := pythonResponse["error"]; hasError {
-		return nil, fmt.Errorf("Python bridge error: %s", errorMsg)
+		return nil, fmt.Errorf("python bridge error: %s", errorMsg)
 	}
 
 	// For now, just convert the response to the expected format by creating a simple struct
@@ -725,4 +745,122 @@ func (e *Exchange) pythonBulkOrdersWithGrouping(
 	}
 
 	return result, nil
+}
+
+// normalizeOrderForBridge adjusts price and size to valid tick/lot sizes while
+// preserving intent. It uses the same helpers as Go-wire conversion to satisfy
+// https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
+func (e *Exchange) normalizeOrderForBridge(order CreateOrderRequest) (CreateOrderRequest, error) {
+	asset := e.info.NameToAsset(order.Coin)
+	isSpot := asset >= 10000
+
+	// Determine step sizes
+	szDecimals, ok := e.info.assetToDecimal[asset]
+	if !ok {
+		szDecimals = 3 // conservative default
+	}
+	maxDecimals := 6
+	if isSpot {
+		maxDecimals = 8
+	}
+	allowedDecimals := maxDecimals - szDecimals
+	if allowedDecimals < 0 {
+		allowedDecimals = 0
+	}
+	priceStep := math.Pow(10, float64(-allowedDecimals))
+	sizeStep := math.Pow(10, float64(-szDecimals))
+
+	// Normalize main price: 5 significant figures, then tick quantize
+	price5sf, err := roundToSignificantFigures(order.Price, 5)
+	if err != nil {
+		return CreateOrderRequest{}, fmt.Errorf("failed to round price to 5 sig figs: %w", err)
+	}
+	priceTicked := math.Round(price5sf/priceStep) * priceStep
+	priceWire, err := PriceToWire(priceTicked, asset, e.info, isSpot)
+	if err != nil {
+		return CreateOrderRequest{}, err
+	}
+	priceFloat, err := strconv.ParseFloat(priceWire, 64)
+	if err != nil {
+		return CreateOrderRequest{}, fmt.Errorf("failed to parse wired price: %w", err)
+	}
+
+	// Normalize size: quantize to lot step
+	sizeTicked := math.Round(order.Size/sizeStep) * sizeStep
+	sizeWire, err := sizeToWireWithAsset(sizeTicked, asset, e.info)
+	if err != nil {
+		return CreateOrderRequest{}, err
+	}
+	sizeFloat, err := strconv.ParseFloat(sizeWire, 64)
+	if err != nil {
+		return CreateOrderRequest{}, fmt.Errorf("failed to parse wired size: %w", err)
+	}
+
+	normalized := order
+	normalized.Price = priceFloat
+	normalized.Size = sizeFloat
+
+	// Normalize trigger price if present
+	if order.OrderType.Trigger != nil {
+		trig5sf, err := roundToSignificantFigures(order.OrderType.Trigger.TriggerPx, 5)
+		if err != nil {
+			return CreateOrderRequest{}, fmt.Errorf("failed to round triggerPx to 5 sig figs: %w", err)
+		}
+		trigTicked := math.Round(trig5sf/priceStep) * priceStep
+		trigWire, err := PriceToWire(trigTicked, asset, e.info, isSpot)
+		if err != nil {
+			return CreateOrderRequest{}, fmt.Errorf("invalid triggerPx: %w", err)
+		}
+		trigFloat, err := strconv.ParseFloat(trigWire, 64)
+		if err != nil {
+			return CreateOrderRequest{}, fmt.Errorf("failed to parse wired triggerPx: %w", err)
+		}
+		tr := *order.OrderType.Trigger
+		tr.TriggerPx = trigFloat
+		// keep tpsl/isMarket as provided
+		normalized.OrderType.Trigger = &tr
+	}
+
+	// Validate tif if limit
+	if normalized.OrderType.Limit != nil {
+		tif := normalized.OrderType.Limit.Tif
+		if tif != TifAlo && tif != TifIoc && tif != TifGtc {
+			return CreateOrderRequest{}, fmt.Errorf("unsupported tif: %s", tif)
+		}
+	}
+
+	return normalized, nil
+}
+
+// validateOrderForBridge ensures price/size (and triggerPx when applicable) conform
+// to the exchange constraints using existing conversion helpers. This mirrors the
+// wiring performed in the Go implementation and surfaces friendly errors before
+// invoking the Python bridge. See Tick and lot size rules:
+// https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
+func (e *Exchange) validateOrderForBridge(order CreateOrderRequest) error {
+	asset := e.info.NameToAsset(order.Coin)
+	isSpot := asset >= 10000
+
+	if _, err := PriceToWire(order.Price, asset, e.info, isSpot); err != nil {
+		return fmt.Errorf("price invalid: %w", err)
+	}
+	if _, err := sizeToWireWithAsset(order.Size, asset, e.info); err != nil {
+		return fmt.Errorf("size invalid: %w", err)
+	}
+
+	if order.OrderType.Trigger != nil {
+		if _, err := PriceToWire(order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot); err != nil {
+			return fmt.Errorf("triggerPx invalid: %w", err)
+		}
+		if order.OrderType.Trigger.Tpsl != "tp" && order.OrderType.Trigger.Tpsl != "sl" {
+			return fmt.Errorf("tpsl must be 'tp' or 'sl'")
+		}
+	}
+	if order.OrderType.Limit != nil {
+		tif := order.OrderType.Limit.Tif
+		if tif != TifAlo && tif != TifIoc && tif != TifGtc {
+			return fmt.Errorf("unsupported tif: %s", tif)
+		}
+	}
+	return nil
 }
