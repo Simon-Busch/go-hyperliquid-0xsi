@@ -35,23 +35,6 @@ func formatFloat(f float64) string {
 	return fmt.Sprintf("%.6f", f)
 }
 
-// floatToWire converts a float64 to a wire-compatible string format
-func floatToWire(x float64) (string, error) {
-	// Format to 8 decimal places (for prices)
-	rounded := fmt.Sprintf("%.8f", x)
-
-	// Handle -0 case
-	if rounded == "-0.00000000" {
-		rounded = "0.00000000"
-	}
-
-	// Remove trailing zeros and decimal point if not needed
-	result := strings.TrimRight(rounded, "0")
-	result = strings.TrimRight(result, ".")
-
-	return result, nil
-}
-
 // sizeToWire converts a float64 size to a wire-compatible string format
 // conforming to Hyperliquid's lot size constraints (typically 2-3 decimal places)
 func sizeToWire(x float64) (string, error) {
@@ -120,8 +103,14 @@ func PriceToWire(x float64, asset int, info *Info, isSpot bool) (string, error) 
 		allowedDecimals = 0
 	}
 
+	// Enforce up to 5 significant figures first
+	roundedSig, err := roundToSignificantFigures(x, 5)
+	if err != nil {
+		return "", err
+	}
+
 	// Format to allowed decimal places
-	rounded := fmt.Sprintf("%.*f", allowedDecimals, x)
+	rounded := fmt.Sprintf("%.*f", allowedDecimals, roundedSig)
 
 	// Handle -0 case
 	if strings.HasPrefix(rounded, "-0.") && strings.TrimRight(strings.TrimPrefix(rounded, "-0."), "0") == "" {
@@ -133,4 +122,49 @@ func PriceToWire(x float64, asset int, info *Info, isSpot bool) (string, error) 
 	result = strings.TrimRight(result, ".")
 
 	return result, nil
+}
+
+// floatToWire converts a float64 to a wire-compatible string format
+func floatToWire(x float64) (string, error) {
+	// Format to 8 decimal places
+	rounded := fmt.Sprintf("%.8f", x)
+
+	// Check if rounding causes significant error
+	parsed, err := strconv.ParseFloat(rounded, 64)
+	if err != nil {
+		return "", err
+	}
+
+	if math.Abs(parsed-x) >= 1e-12 {
+		return "", fmt.Errorf("float_to_wire causes rounding: %f", x)
+	}
+
+	// Handle -0 case
+	if rounded == "-0.00000000" {
+		rounded = "0.00000000"
+	}
+
+	// Remove trailing zeros and decimal point if not needed
+	result := strings.TrimRight(rounded, "0")
+	result = strings.TrimRight(result, ".")
+
+	return result, nil
+}
+
+func roundToSignificantFigures(x float64, n int) (float64, error) {
+	if x == 0 {
+		return 0, nil
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("significant figures must be > 0")
+	}
+
+	// order of magnitude
+	d := math.Ceil(math.Log10(math.Abs(x)))
+	power := n - int(d)
+
+	magnitude := math.Pow(10, float64(power))
+	shifted := math.Round(x * magnitude)
+
+	return shifted / magnitude, nil
 }
