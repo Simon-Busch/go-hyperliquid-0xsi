@@ -15,3 +15,6 @@ var approveBuilderFeePythonScript string
 
 //go:embed python_bridge/bulk_orders_grouping.py
 var bulkOrdersWithGroupingPythonScript string
+
+//go:embed python_bridge/withdraw.py
+var withdrawPythonScript string

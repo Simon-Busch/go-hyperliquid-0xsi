@@ -661,42 +661,12 @@ func (e *Exchange) TokenDelegate(
 	return &result, nil
 }
 
-// WithdrawFromBridge withdraws tokens from bridge
+// WithdrawFromBridge withdraws tokens from bridge using Python bridge for 100% signature compatibility
 func (e *Exchange) WithdrawFromBridge(
 	amount float64,
 	destination string,
 ) (*TransferResponse, error) {
-	timestamp := time.Now().UnixMilli()
-
-	action := WithdrawFromBridgeAction{
-		Type:        "withdraw3",
-		Destination: destination,
-		Amount:      fmt.Sprintf("%.6f", amount),
-		Time:        timestamp,
-	}
-
-	sig, err := SignL1Action(
-		e.privateKey,
-		action,
-		e.vault,
-		timestamp,
-		e.expiresAfter,
-		e.client.baseURL == MainnetAPIURL,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := e.postAction(action, sig, timestamp)
-	if err != nil {
-		return nil, err
-	}
-
-	var result TransferResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return e.pythonWithdrawFromBridge(amount, destination)
 }
 
 // ApproveAgent approves an agent to trade on behalf of the user
@@ -1602,4 +1572,64 @@ func (e *Exchange) getAssetTickSizeFallback(assetID int) float64 {
 	default:
 		return 0.01 // Default for most perp assets
 	}
+}
+
+// pythonWithdrawFromBridge calls the Hyperliquid Python SDK withdraw function via our bridge script
+func (e *Exchange) pythonWithdrawFromBridge(amount float64, destination string) (*TransferResponse, error) {
+	// Convert private key to hex string
+	privateKeyBytes := e.privateKey.D.Bytes()
+	if len(privateKeyBytes) < 32 {
+		padded := make([]byte, 32)
+		copy(padded[32-len(privateKeyBytes):], privateKeyBytes)
+		privateKeyBytes = padded
+	}
+	privateKeyHex := "0x" + hex.EncodeToString(privateKeyBytes)
+
+	// Determine if mainnet
+	isMainnet := e.client.baseURL == MainnetAPIURL
+
+	// Use embedded Python script
+	output, err := callPythonBridge(
+		withdrawPythonScript,
+		"withdraw.py",
+		privateKeyHex,
+		fmt.Sprintf("%t", isMainnet),
+		fmt.Sprintf("%.6f", amount),
+		destination,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var pythonResponse map[string]interface{}
+	if err := json.Unmarshal(output, &pythonResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse Python response: %w\nOutput: %s", err, string(output))
+	}
+
+	// Check for errors
+	if errorMsg, hasError := pythonResponse["error"]; hasError {
+		return nil, fmt.Errorf("Python bridge error: %s", errorMsg)
+	}
+
+	// Convert Python response to Go TransferResponse format
+	result := &TransferResponse{
+		Status: pythonResponse["status"].(string),
+	}
+
+	// Check if there's an error field in the response
+	if response, hasResponse := pythonResponse["response"]; hasResponse {
+		if responseStr, isString := response.(string); isString {
+			result.Error = responseStr
+		}
+	}
+
+	// Check if there's a txHash field in the response
+	if txHash, hasTxHash := pythonResponse["txHash"]; hasTxHash {
+		if txHashStr, isString := txHash.(string); isString {
+			result.TxHash = txHashStr
+		}
+	}
+
+	return result, nil
 }
