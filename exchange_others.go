@@ -29,19 +29,14 @@ func (e *Exchange) UpdateLeverage(leverage int, name string, isCross bool) (*Use
 	return &result, nil
 }
 
-func (e *Exchange) UpdateIsolatedMargin(amount float64, name string) (*UserState, error) {
-	action := UpdateIsolatedMarginAction{
-		Type:  "updateIsolatedMargin",
-		Asset: e.info.NameToAsset(name),
-		IsBuy: amount > 0,
-		Ntli:  abs(amount),
-	}
+// DefaultResponse represents a simple API response with type "default"
+type DefaultResponse struct {
+	Type string `json:"type"`
+}
 
-	var result UserState
-	if err := e.executeAction(action, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+func (e *Exchange) UpdateIsolatedMargin(amount float64, name string) (*APIResponse[DefaultResponse], error) {
+	// Use Python bridge for 100% signature compatibility
+	return e.pythonUpdateIsolatedMargin(amount, name)
 }
 
 // SetExpiresAfter sets the expiration time for actions
@@ -1628,6 +1623,67 @@ func (e *Exchange) pythonWithdrawFromBridge(amount float64, destination string) 
 	if txHash, hasTxHash := pythonResponse["txHash"]; hasTxHash {
 		if txHashStr, isString := txHash.(string); isString {
 			result.TxHash = txHashStr
+		}
+	}
+
+	return result, nil
+}
+
+// pythonUpdateIsolatedMargin calls the Hyperliquid Python SDK updateIsolatedMargin function via our bridge script
+func (e *Exchange) pythonUpdateIsolatedMargin(amount float64, coin string) (*APIResponse[DefaultResponse], error) {
+	// Convert private key to hex string
+	privateKeyBytes := e.privateKey.D.Bytes()
+	if len(privateKeyBytes) < 32 {
+		padded := make([]byte, 32)
+		copy(padded[32-len(privateKeyBytes):], privateKeyBytes)
+		privateKeyBytes = padded
+	}
+	privateKeyHex := "0x" + hex.EncodeToString(privateKeyBytes)
+
+	// Determine if mainnet
+	isMainnet := e.client.baseURL == MainnetAPIURL
+
+	// Use embedded Python script
+	output, err := callPythonBridge(
+		updateIsolatedMarginPythonScript,
+		"update_isolated_margin.py",
+		privateKeyHex,
+		fmt.Sprintf("%t", isMainnet),
+		fmt.Sprintf("%.6f", amount),
+		coin,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var pythonResponse map[string]interface{}
+	if err := json.Unmarshal(output, &pythonResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse Python response: %w\nOutput: %s", err, string(output))
+	}
+
+	// Check for errors
+	if errorMsg, hasError := pythonResponse["error"]; hasError {
+		return nil, fmt.Errorf("Python bridge error: %s", errorMsg)
+	}
+
+	// Convert Python response to Go APIResponse[DefaultResponse] format
+	result := &APIResponse[DefaultResponse]{
+		Status: pythonResponse["status"].(string),
+		Ok:     pythonResponse["status"] == "ok",
+	}
+
+	// Check if there's an error field in the response
+	if response, hasResponse := pythonResponse["response"]; hasResponse {
+		if responseStr, isString := response.(string); isString {
+			result.Err = responseStr
+		} else if responseMap, isMap := response.(map[string]interface{}); isMap {
+			// Parse the response data
+			if responseType, hasType := responseMap["type"]; hasType {
+				if typeStr, isString := responseType.(string); isString {
+					result.Data = DefaultResponse{Type: typeStr}
+				}
+			}
 		}
 	}
 
