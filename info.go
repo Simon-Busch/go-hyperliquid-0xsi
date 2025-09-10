@@ -140,7 +140,22 @@ func (i *Info) UserState(address string) (*UserState, error) {
 	return &result, nil
 }
 
-func (i *Info) SpotUserState(address string) (*UserState, error) {
+// SpotBalance represents a single spot token balance entry returned by the
+// spotClearinghouseState endpoint.
+type SpotBalance struct {
+	Coin     string `json:"coin"`
+	Token    int    `json:"token"`
+	Hold     string `json:"hold"`
+	Total    string `json:"total"`
+	EntryNtl string `json:"entryNtl"`
+}
+
+// SpotClearinghouseState is the response model for the spot balances endpoint.
+type SpotClearinghouseState struct {
+	Balances []SpotBalance `json:"balances"`
+}
+
+func (i *Info) SpotUserState(address string) (*SpotClearinghouseState, error) {
 	resp, err := i.client.post("/info", map[string]any{
 		"type": "spotClearinghouseState",
 		"user": address,
@@ -149,7 +164,7 @@ func (i *Info) SpotUserState(address string) (*UserState, error) {
 		return nil, fmt.Errorf("failed to fetch spot user state: %w", err)
 	}
 
-	var result UserState
+	var result SpotClearinghouseState
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal spot user state: %w", err)
 	}
