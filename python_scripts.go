@@ -18,3 +18,6 @@ var bulkOrdersWithGroupingPythonScript string
 
 //go:embed python_bridge/withdraw.py
 var withdrawPythonScript string
+
+//go:embed python_bridge/update_isolated_margin.py
+var updateIsolatedMarginPythonScript string
