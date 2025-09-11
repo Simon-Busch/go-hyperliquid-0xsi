@@ -312,42 +312,7 @@ func (e *Exchange) CreateSubAccount(name string) (*CreateSubAccountResponse, err
 
 // UsdClassTransfer transfers between USD classes
 func (e *Exchange) UsdClassTransfer(amount float64, toPerp bool) (*TransferResponse, error) {
-	timestamp := time.Now().UnixMilli()
-
-	strAmount := formatFloat(amount)
-	if e.vault != "" {
-		strAmount += " subaccount:" + e.vault
-	}
-
-	action := UsdClassTransferAction{
-		Type:   "usdClassTransfer",
-		Amount: strAmount,
-		ToPerp: toPerp,
-		Nonce:  timestamp,
-	}
-
-	sig, err := SignL1Action(
-		e.privateKey,
-		action,
-		e.vault,
-		timestamp,
-		e.expiresAfter,
-		e.client.baseURL == MainnetAPIURL,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := e.postAction(action, sig, timestamp)
-	if err != nil {
-		return nil, err
-	}
-
-	var result TransferResponse
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
+	return e.pythonUsdClassTransfer(amount, toPerp)
 }
 
 // SubAccountTransfer transfers funds to/from sub-account
@@ -1687,5 +1652,47 @@ func (e *Exchange) pythonUpdateIsolatedMargin(amount float64, coin string) (*API
 		}
 	}
 
+	return result, nil
+}
+
+// pythonUsdClassTransfer calls the Hyperliquid Python SDK usd_class_transfer via our bridge script
+func (e *Exchange) pythonUsdClassTransfer(amount float64, toPerp bool) (*TransferResponse, error) {
+	// Convert private key to hex string
+	privateKeyBytes := e.privateKey.D.Bytes()
+	if len(privateKeyBytes) < 32 {
+		padded := make([]byte, 32)
+		copy(padded[32-len(privateKeyBytes):], privateKeyBytes)
+		privateKeyBytes = padded
+	}
+	privateKeyHex := "0x" + hex.EncodeToString(privateKeyBytes)
+
+	isMainnet := e.client.baseURL == MainnetAPIURL
+
+	output, err := callPythonBridge(
+		usdClassTransferPythonScript,
+		"usd_class_transfer.py",
+		privateKeyHex,
+		fmt.Sprintf("%t", isMainnet),
+		fmt.Sprintf("%.6f", amount),
+		fmt.Sprintf("%t", toPerp),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var pythonResponse map[string]interface{}
+	if err := json.Unmarshal(output, &pythonResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse Python response: %w\nOutput: %s", err, string(output))
+	}
+	if errorMsg, hasError := pythonResponse["error"]; hasError {
+		return nil, fmt.Errorf("Python bridge error: %s", errorMsg)
+	}
+
+	result := &TransferResponse{Status: pythonResponse["status"].(string)}
+	if response, hasResponse := pythonResponse["response"]; hasResponse {
+		if responseStr, isString := response.(string); isString {
+			result.Error = responseStr
+		}
+	}
 	return result, nil
 }
