@@ -21,3 +21,6 @@ var withdrawPythonScript string
 
 //go:embed python_bridge/update_isolated_margin.py
 var updateIsolatedMarginPythonScript string
+
+//go:embed python_bridge/usd_class_transfer.py
+var usdClassTransferPythonScript string
