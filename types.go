@@ -28,8 +28,9 @@ const (
 )
 
 type AssetInfo struct {
-	Name       string `json:"name"`
-	SzDecimals int    `json:"szDecimals"`
+	Name        string `json:"name"`
+	SzDecimals  int    `json:"szDecimals"`
+	MaxLeverage int    `json:"maxLeverage"`
 }
 
 type Meta struct {
@@ -72,6 +73,41 @@ type SpotAssetCtx struct {
 	CirculatingSupply string  `json:"circulatingSupply"`
 	Coin              string  `json:"coin"`
 }
+
+// AssetCtx represents perpetual asset context data including mark price, funding, open interest, etc.
+type AssetCtx struct {
+	DayNtlVlm    string   `json:"dayNtlVlm"`
+	Funding      string   `json:"funding"`
+	ImpactPxs    []string `json:"impactPxs"`
+	MarkPx       string   `json:"markPx"`
+	MidPx        string   `json:"midPx"`
+	OpenInterest string   `json:"openInterest"`
+	OraclePx     string   `json:"oraclePx"`
+	Premium      string   `json:"premium"`
+	PrevDayPx    string   `json:"prevDayPx"`
+}
+
+// MarginTier represents a single margin tier
+type MarginTier struct {
+	LowerBound  string `json:"lowerBound"`
+	MaxLeverage int    `json:"maxLeverage"`
+}
+
+// MarginTable represents a margin table with description and tiers
+type MarginTable struct {
+	Description string        `json:"description"`
+	MarginTiers []MarginTier  `json:"marginTiers"`
+}
+
+// MetaAndAssetCtxsResponse represents the response from the metaAndAssetCtxs endpoint
+// The API returns an array with two elements: [meta, assetCtxs]
+type MetaAndAssetCtxsResponse struct {
+	Meta      Meta      `json:"universe"`
+	AssetCtxs []AssetCtx `json:"assetCtxs"`
+}
+
+// MetaAndAssetCtxsRawResponse represents the raw array response from the API
+type MetaAndAssetCtxsRawResponse [2]interface{}
 
 // WsMsg represents a WebSocket message with a channel and data payload.
 type WsMsg struct {

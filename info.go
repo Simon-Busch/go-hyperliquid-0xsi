@@ -247,7 +247,7 @@ func (i *Info) UserFillsByTime(address string, startTime int64, endTime *int64) 
 	return result, nil
 }
 
-func (i *Info) MetaAndAssetCtxs() (map[string]any, error) {
+func (i *Info) MetaAndAssetCtxs() (*MetaAndAssetCtxsResponse, error) {
 	resp, err := i.client.post("/info", map[string]any{
 		"type": "metaAndAssetCtxs",
 	})
@@ -255,11 +255,38 @@ func (i *Info) MetaAndAssetCtxs() (map[string]any, error) {
 		return nil, fmt.Errorf("failed to fetch meta and asset contexts: %w", err)
 	}
 
-	var result map[string]any
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal meta and asset contexts: %w", err)
+	// The API returns an array with two elements: [meta, assetCtxs]
+	var rawResponse [2]interface{}
+	if err := json.Unmarshal(resp, &rawResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal meta and asset contexts array: %w", err)
 	}
-	return result, nil
+
+	// Parse the meta object (first element)
+	metaBytes, err := json.Marshal(rawResponse[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal meta object: %w", err)
+	}
+
+	var meta Meta
+	if err := json.Unmarshal(metaBytes, &meta); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal meta: %w", err)
+	}
+
+	// Parse the asset contexts array (second element)
+	assetCtxsBytes, err := json.Marshal(rawResponse[1])
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal asset contexts array: %w", err)
+	}
+
+	var assetCtxs []AssetCtx
+	if err := json.Unmarshal(assetCtxsBytes, &assetCtxs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal asset contexts: %w", err)
+	}
+
+	return &MetaAndAssetCtxsResponse{
+		Meta:      meta,
+		AssetCtxs: assetCtxs,
+	}, nil
 }
 
 func (i *Info) SpotMetaAndAssetCtxs() (map[string]any, error) {
