@@ -28,6 +28,7 @@ type WebsocketClient struct {
 	subscriptions map[subKey]map[int]*subscriptionCallback
 	nextSubID     atomic.Int32
 	done          chan struct{}
+	closed        atomic.Bool
 	reconnectWait time.Duration
 }
 
@@ -130,7 +131,10 @@ func (w *WebsocketClient) Unsubscribe(sub Subscription, id int) error {
 }
 
 func (w *WebsocketClient) Close() error {
-	close(w.done)
+	// Only close the done channel once using atomic flag
+	if w.closed.CompareAndSwap(false, true) {
+		close(w.done)
+	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
