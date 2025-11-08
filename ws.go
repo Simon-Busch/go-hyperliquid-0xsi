@@ -15,7 +15,7 @@ import (
 
 const (
 	// pingInterval is the interval for sending ping messages to keep WebSocket alive
-	pingInterval = 50 * time.Second
+	pingInterval = 10 * time.Second
 	// gracefulCloseTimeout is the timeout for graceful WebSocket close
 	gracefulCloseTimeout = 10 * time.Second
 )
