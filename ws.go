@@ -357,7 +357,7 @@ func (w *WebsocketClient) reconnect() {
 	log.Printf("Starting reconnection attempts...")
 
 	backoff := w.reconnectWait
-	maxRetries := 10
+	maxRetries := 200
 	retryCount := 0
 
 	for {
