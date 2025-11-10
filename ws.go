@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/url"
 	"sync"
 	"sync/atomic"
@@ -16,17 +17,6 @@ import (
 const (
 	// pingInterval is the interval for sending ping messages to keep WebSocket alive
 	pingInterval = 10 * time.Second
-	// gracefulCloseTimeout is the timeout for graceful WebSocket close
-	gracefulCloseTimeout = 10 * time.Second
-)
-
-// Connection states
-const (
-	stateDisconnected int32 = iota
-	stateConnecting
-	stateConnected
-	stateReconnecting
-	stateClosed
 )
 
 type WebsocketClient struct {
@@ -36,18 +26,19 @@ type WebsocketClient struct {
 	writeMu       sync.Mutex
 	subscriptions map[subKey]map[int]*subscriptionCallback
 	nextSubID     atomic.Int32
-	done          chan struct{}
-	closed        atomic.Bool
-	reconnectWait time.Duration
 
-	// Connection state management
-	state              atomic.Int32       // Current connection state
-	connReady          chan struct{}      // Signaled when connection is established and ready
-	connReadyOnce      sync.Once          // Ensures connReady is closed only once per connection
-	stopReconnect      chan struct{}      // Signal to stop reconnection attempts
-	connCtx            context.Context    // Connection-scoped context
-	connCancel         context.CancelFunc // Cancel function for connection context
-	MaxReconnectAttempts int              // Maximum reconnection attempts (0 = unlimited, default)
+	// Simple state management (like Python)
+	running   atomic.Bool // Should the client be running?
+	connected atomic.Bool // Is the connection established?
+
+	// Goroutine lifecycle management
+	wg sync.WaitGroup // Track goroutines for clean shutdown
+
+	// Reconnection settings
+	reconnectWait        time.Duration
+	reconnectAttempts    atomic.Int32
+	MaxReconnectAttempts int // Maximum reconnection attempts (0 = unlimited, default)
+	reconnectTimer       *time.Timer
 }
 
 func NewWebsocketClient(baseURL string) *WebsocketClient {
@@ -65,74 +56,64 @@ func NewWebsocketClient(baseURL string) *WebsocketClient {
 	wc := &WebsocketClient{
 		url:           wsURL,
 		subscriptions: make(map[subKey]map[int]*subscriptionCallback),
-		done:          make(chan struct{}),
 		reconnectWait: time.Second,
-		connReady:     make(chan struct{}),
-		stopReconnect: make(chan struct{}),
 	}
-	wc.state.Store(stateDisconnected)
+
+	// Start goroutines once - they'll live for the lifetime of the client (like Python daemon threads)
+	wc.wg.Add(2)
+	go wc.readLoop()
+	go wc.pingLoop()
+
 	return wc
 }
 
 func (w *WebsocketClient) Connect(ctx context.Context) error {
-	// Check current state
-	currentState := w.state.Load()
-	if currentState == stateClosed {
-		return fmt.Errorf("client is closed")
+	// First connection - mark as running
+	if !w.running.Load() {
+		w.running.Store(true)
 	}
-	if currentState == stateConnected || currentState == stateConnecting {
-		// Already connected or connecting
+
+	// Check if already connected
+	if w.connected.Load() {
 		return nil
 	}
 
 	w.mu.Lock()
 
 	// Double check after acquiring lock
-	if w.conn != nil && w.state.Load() == stateConnected {
+	if w.conn != nil && w.connected.Load() {
 		w.mu.Unlock()
 		return nil
 	}
-
-	// Set state to connecting
-	w.state.Store(stateConnecting)
 
 	dialer := websocket.Dialer{}
 
 	//nolint:bodyclose // WebSocket connections don't have response bodies to close
 	conn, _, err := dialer.DialContext(ctx, w.url, nil)
 	if err != nil {
-		w.state.Store(stateDisconnected)
 		w.mu.Unlock()
 		return fmt.Errorf("websocket dial: %w", err)
 	}
 
 	w.conn = conn
-
-	// Cancel previous connection context if it exists
-	if w.connCancel != nil {
-		w.connCancel()
-	}
-
-	// Create connection-scoped context (not tied to caller's context)
-	w.connCtx, w.connCancel = context.WithCancel(context.Background())
-
-	// Create new connReady channel and reset sync.Once for this connection
-	w.connReady = make(chan struct{})
-	w.connReadyOnce = sync.Once{}
-
-	// Release lock before launching goroutines to avoid deadlock
 	w.mu.Unlock()
 
-	// Launch goroutines with connection-scoped context
-	go w.readPump(w.connCtx)
-	go w.pingPump(w.connCtx)
+	// Mark as connected
+	w.connected.Store(true)
 
-	// Mark as connected - readPump will handle validation and set state properly
-	// when first message arrives. If connection fails, readPump triggers reconnection.
-	w.state.Store(stateConnected)
+	// Reset reconnection attempts on successful connection
+	w.reconnectAttempts.Store(0)
 
 	// Resubscribe to all previous subscriptions
 	if err := w.resubscribeAll(); err != nil {
+		// If resubscribe fails, clean up the connection
+		w.mu.Lock()
+		if w.conn != nil {
+			_ = w.conn.Close()
+			w.conn = nil
+		}
+		w.mu.Unlock()
+		w.connected.Store(false)
 		return fmt.Errorf("resubscribe failed: %w", err)
 	}
 
@@ -202,230 +183,179 @@ func (w *WebsocketClient) Unsubscribe(sub Subscription, id int) error {
 }
 
 func (w *WebsocketClient) Close() error {
-	// Only close the done channel once using atomic flag
-	if !w.closed.CompareAndSwap(false, true) {
-		return nil // Already closed
+	// Mark as not running
+	w.running.Store(false)
+	w.connected.Store(false)
+
+	// Cancel any pending reconnection timer
+	if w.reconnectTimer != nil {
+		w.reconnectTimer.Stop()
 	}
 
-	// Set state to closed
-	w.state.Store(stateClosed)
-
-	// Cancel connection context to stop goroutines
-	if w.connCancel != nil {
-		w.connCancel()
-	}
-
-	// Signal channels
-	close(w.done)
-	select {
-	case <-w.stopReconnect:
-		// Already closed
-	default:
-		close(w.stopReconnect)
-	}
-
+	// Close connection
 	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if w.conn != nil {
-		return w.conn.Close()
+		_ = w.conn.Close()
+		w.conn = nil
 	}
+	w.mu.Unlock()
+
+	// Wait for goroutines to exit (like Python's thread.join())
+	w.wg.Wait()
+
 	return nil
 }
 
 // Private methods
 
-func (w *WebsocketClient) readPump(ctx context.Context) {
-	connectionReady := false
-	defer func() {
-		// Mark state as disconnected
-		oldState := w.state.Swap(stateDisconnected)
+// readLoop runs for the lifetime of the client (like Python's daemon thread)
+func (w *WebsocketClient) readLoop() {
+	defer w.wg.Done()
 
-		w.mu.Lock()
-		if w.conn != nil {
-			_ = w.conn.Close() // Ignore close error in defer
-			w.conn = nil
+	for w.running.Load() {
+		// Idle while not connected
+		if !w.connected.Load() {
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
-		w.mu.Unlock()
 
-		// If we were connected and this wasn't a normal close, try to reconnect
-		if oldState == stateConnected && !w.closed.Load() {
-			go w.reconnect()
+		w.mu.RLock()
+		conn := w.conn
+		w.mu.RUnlock()
+
+		if conn == nil {
+			w.connected.Store(false)
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
-	}()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-w.done:
-			return
-		default:
-			w.mu.RLock()
-			conn := w.conn
-			w.mu.RUnlock()
-
-			if conn == nil {
-				return
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+				log.Printf("websocket read error: %v", err)
 			}
+			// Mark as disconnected
+			w.connected.Store(false)
 
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-					log.Printf("websocket read error: %v", err)
-				}
-				return
+			// Close connection
+			w.mu.Lock()
+			if w.conn != nil {
+				_ = w.conn.Close()
+				w.conn = nil
 			}
+			w.mu.Unlock()
 
-			// Handle the initial connection message
-			if string(msg) == "Websocket connection established." {
-				if !connectionReady {
-					connectionReady = true
-					w.state.Store(stateConnected)
-					// Signal that connection is ready using sync.Once
-					w.connReadyOnce.Do(func() {
-						close(w.connReady)
-					})
-				}
-				continue
+			// Trigger reconnection
+			if w.running.Load() {
+				w.scheduleReconnect()
 			}
-
-			// Ensure we're in connected state (in case we didn't get the initial message)
-			if !connectionReady {
-				connectionReady = true
-				w.state.Store(stateConnected)
-				// Signal that connection is ready using sync.Once
-				w.connReadyOnce.Do(func() {
-					close(w.connReady)
-				})
-			}
-
-			var wsMsg WSMessage
-			if err := json.Unmarshal(msg, &wsMsg); err != nil {
-				log.Printf("websocket message parse error: %v", err)
-				continue
-			}
-
-			w.dispatch(wsMsg)
+			continue
 		}
+
+		// Skip server hello message
+		if string(msg) == "Websocket connection established." {
+			continue
+		}
+
+		// Parse and dispatch
+		var wsMsg WSMessage
+		if err := json.Unmarshal(msg, &wsMsg); err != nil {
+			log.Printf("websocket message parse error: %v", err)
+			continue
+		}
+
+		w.dispatch(wsMsg)
 	}
 }
 
-func (w *WebsocketClient) pingPump(ctx context.Context) {
+// pingLoop runs for the lifetime of the client (like Python's daemon thread)
+func (w *WebsocketClient) pingLoop() {
+	defer w.wg.Done()
+
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-w.done:
-			return
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			state := w.state.Load()
-			// Only send ping if we're in connected state
-			if state == stateConnected {
-				if err := w.sendPing(); err != nil {
-					log.Printf("ping error: %v", err)
-					// Don't trigger reconnect here - let readPump handle it
-					return
-				}
-			} else if state == stateConnecting || state == stateReconnecting {
-				// Log when pings are skipped during connection states
-				log.Printf("ping skipped: connection in state %d (not connected)", state)
+	for w.running.Load() {
+		<-ticker.C
+
+		// Only send ping if connected
+		if w.connected.Load() {
+			if err := w.sendPing(); err != nil {
+				log.Printf("ping error: %v", err)
+				// Don't exit - readLoop will handle disconnection
 			}
 		}
 	}
 }
 
+// dispatch executes callbacks (copies callbacks first to avoid holding lock - like Python)
 func (w *WebsocketClient) dispatch(msg WSMessage) {
+	// Copy callbacks under lock
 	w.mu.RLock()
-	defer w.mu.RUnlock()
-
+	var callbacks []func(WSMessage)
 	for key, subs := range w.subscriptions {
 		if matchSubscription(key, msg) {
 			for _, sub := range subs {
-				sub.callback(msg)
+				callbacks = append(callbacks, sub.callback)
 			}
 		}
 	}
+	w.mu.RUnlock()
+
+	// Execute callbacks without holding lock (prevents callback from blocking other operations)
+	for _, cb := range callbacks {
+		cb(msg)
+	}
 }
 
-func (w *WebsocketClient) reconnect() {
-	// Check if we should even try to reconnect
-	if w.closed.Load() {
-		return
-	}
+// scheduleReconnect uses timer-based reconnection (like Python's threading.Timer)
+func (w *WebsocketClient) scheduleReconnect() {
+	attempts := w.reconnectAttempts.Add(1)
 
-	// Try to transition to reconnecting state
-	if !w.state.CompareAndSwap(stateDisconnected, stateReconnecting) {
-		// Already reconnecting or in another state
-		return
-	}
-
-	log.Printf("Starting reconnection attempts...")
-
-	backoff := w.reconnectWait
+	// Check max attempts
 	maxRetries := w.MaxReconnectAttempts
-	if maxRetries == 0 {
-		// 0 means unlimited attempts
-		log.Printf("Reconnection attempts: unlimited")
-	} else {
-		log.Printf("Max reconnection attempts: %d", maxRetries)
+	if maxRetries > 0 && int(attempts) > maxRetries {
+		log.Printf("Max reconnection attempts (%d) reached, giving up", maxRetries)
+		w.running.Store(false)
+		return
 	}
-	retryCount := 0
 
-	for {
-		select {
-		case <-w.done:
-			w.state.Store(stateDisconnected)
-			return
-		case <-w.stopReconnect:
-			w.state.Store(stateDisconnected)
-			return
-		default:
-			if maxRetries > 0 && retryCount >= maxRetries {
-				log.Printf("Max reconnection attempts (%d) reached, giving up", maxRetries)
-				w.state.Store(stateDisconnected)
-				return
-			}
+	// Calculate backoff with jitter (like Python)
+	backoff := w.reconnectWait * time.Duration(1<<(attempts-1))
+	if backoff > time.Minute {
+		backoff = time.Minute
+	}
+	// Add jitter (±20%)
+	jitter := time.Duration(float64(backoff) * 0.2 * (2*rand.Float64() - 1))
+	delay := backoff + jitter
+	if delay < time.Second {
+		delay = time.Second
+	}
 
-			retryCount++
+	log.Printf("Reconnection attempt %d (waiting %v)...", attempts, delay)
 
-			// Wait BEFORE dialing to prevent reconnection storms
-			if maxRetries > 0 {
-				log.Printf("Reconnection attempt %d/%d (waiting %v)...", retryCount, maxRetries, backoff)
-			} else {
-				log.Printf("Reconnection attempt %d (waiting %v)...", retryCount, backoff)
-			}
-			time.Sleep(backoff)
+	// Stop existing timer if any
+	if w.reconnectTimer != nil {
+		w.reconnectTimer.Stop()
+	}
 
-			// Reset state to disconnected before attempting connect
-			w.state.Store(stateDisconnected)
-
+	// Single-shot timer (like Python's threading.Timer)
+	w.reconnectTimer = time.AfterFunc(delay, func() {
+		if w.running.Load() && !w.connected.Load() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			err := w.Connect(ctx)
 			cancel()
 
 			if err == nil {
-				log.Printf("Reconnection successful after %d attempts", retryCount)
-				// Reset backoff on success
-				w.reconnectWait = time.Second
-				return
+				log.Printf("Reconnection successful after %d attempts", attempts)
+				w.reconnectWait = time.Second // Reset backoff
+			} else {
+				log.Printf("Reconnection attempt %d failed: %v", attempts, err)
+				// Schedule next attempt
+				w.scheduleReconnect()
 			}
-
-			log.Printf("Reconnection attempt %d failed: %v", retryCount, err)
-
-			// Exponential backoff for NEXT attempt
-			backoff *= 2
-			if backoff > time.Minute {
-				backoff = time.Minute
-			}
-
-			// Set state back to reconnecting for next iteration
-			w.state.Store(stateReconnecting)
 		}
-	}
+	})
 }
 
 func (w *WebsocketClient) resubscribeAll() error {
@@ -477,10 +407,9 @@ func (w *WebsocketClient) writeJSON(v any) error {
 	w.writeMu.Lock()
 	defer w.writeMu.Unlock()
 
-	// Check connection state
-	state := w.state.Load()
-	if state != stateConnected {
-		return fmt.Errorf("connection not ready (state: %d)", state)
+	// Check if connected
+	if !w.connected.Load() {
+		return fmt.Errorf("not connected")
 	}
 
 	// Hold read lock while using conn to prevent TOCTOU race
@@ -540,9 +469,9 @@ func (w *WebsocketClient) SubscribeToCandles(
 	return w.Subscribe(sub, callback)
 }
 
-// SubscribeToOrderUpdates subscribes to order updates
-func (w *WebsocketClient) SubscribeToOrderUpdates(callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "orderUpdates"}
+// SubscribeToOrderUpdates subscribes to order updates for a specific user
+func (w *WebsocketClient) SubscribeToOrderUpdates(user string, callback func(WSMessage)) (int, error) {
+	sub := Subscription{Type: "orderUpdates", User: user}
 	return w.Subscribe(sub, callback)
 }
 
@@ -638,7 +567,8 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 	case "orderUpdates":
 		return msg.Channel == "orderUpdates"
 	case "userEvents":
-		return msg.Channel == "userEvents"
+		// Note: userEvents subscription sends messages on "user" channel, not "userEvents"
+		return msg.Channel == "user"
 	case "userFills":
 		return msg.Channel == "userFills"
 	case "userFundings":
