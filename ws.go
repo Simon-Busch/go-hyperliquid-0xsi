@@ -43,7 +43,10 @@ type WebsocketClient struct {
 	// Connection state management
 	state         atomic.Int32  // Current connection state
 	connReady     chan struct{} // Signaled when connection is established and ready
+	connReadyOnce sync.Once     // Ensures connReady is closed only once per connection
 	stopReconnect chan struct{} // Signal to stop reconnection attempts
+	connCtx       context.Context // Connection-scoped context
+	connCancel    context.CancelFunc // Cancel function for connection context
 }
 
 func NewWebsocketClient(baseURL string) *WebsocketClient {
@@ -82,10 +85,10 @@ func (w *WebsocketClient) Connect(ctx context.Context) error {
 	}
 
 	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	// Double check after acquiring lock
 	if w.conn != nil && w.state.Load() == stateConnected {
+		w.mu.Unlock()
 		return nil
 	}
 
@@ -98,17 +101,30 @@ func (w *WebsocketClient) Connect(ctx context.Context) error {
 	conn, _, err := dialer.DialContext(ctx, w.url, nil)
 	if err != nil {
 		w.state.Store(stateDisconnected)
+		w.mu.Unlock()
 		return fmt.Errorf("websocket dial: %w", err)
 	}
 
 	w.conn = conn
 
-	// Create new connReady channel for this connection
-	w.connReady = make(chan struct{})
+	// Cancel previous connection context if it exists
+	if w.connCancel != nil {
+		w.connCancel()
+	}
 
-	// Launch goroutines
-	go w.readPump(ctx)
-	go w.pingPump(ctx)
+	// Create connection-scoped context (not tied to caller's context)
+	w.connCtx, w.connCancel = context.WithCancel(context.Background())
+
+	// Create new connReady channel and reset sync.Once for this connection
+	w.connReady = make(chan struct{})
+	w.connReadyOnce = sync.Once{}
+
+	// Release lock before launching goroutines to avoid deadlock
+	w.mu.Unlock()
+
+	// Launch goroutines with connection-scoped context
+	go w.readPump(w.connCtx)
+	go w.pingPump(w.connCtx)
 
 	// Wait for the connection to be ready (initial message received)
 	// or timeout after 5 seconds
@@ -204,6 +220,11 @@ func (w *WebsocketClient) Close() error {
 	// Set state to closed
 	w.state.Store(stateClosed)
 
+	// Cancel connection context to stop goroutines
+	if w.connCancel != nil {
+		w.connCancel()
+	}
+
 	// Signal channels
 	close(w.done)
 	select {
@@ -271,13 +292,10 @@ func (w *WebsocketClient) readPump(ctx context.Context) {
 				if !connectionReady {
 					connectionReady = true
 					w.state.Store(stateConnected)
-					// Signal that connection is ready (safe close check)
-					select {
-					case <-w.connReady:
-						// Already closed
-					default:
+					// Signal that connection is ready using sync.Once
+					w.connReadyOnce.Do(func() {
 						close(w.connReady)
-					}
+					})
 				}
 				continue
 			}
@@ -286,13 +304,10 @@ func (w *WebsocketClient) readPump(ctx context.Context) {
 			if !connectionReady {
 				connectionReady = true
 				w.state.Store(stateConnected)
-				// Signal that connection is ready (safe close check)
-				select {
-				case <-w.connReady:
-					// Already closed
-				default:
+				// Signal that connection is ready using sync.Once
+				w.connReadyOnce.Do(func() {
 					close(w.connReady)
-				}
+				})
 			}
 
 			var wsMsg WSMessage
@@ -317,13 +332,17 @@ func (w *WebsocketClient) pingPump(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			state := w.state.Load()
 			// Only send ping if we're in connected state
-			if w.state.Load() == stateConnected {
+			if state == stateConnected {
 				if err := w.sendPing(); err != nil {
 					log.Printf("ping error: %v", err)
 					// Don't trigger reconnect here - let readPump handle it
 					return
 				}
+			} else if state == stateConnecting || state == stateReconnecting {
+				// Log when pings are skipped during connection states
+				log.Printf("ping skipped: connection in state %d (not connected)", state)
 			}
 		}
 	}
@@ -409,18 +428,27 @@ func (w *WebsocketClient) reconnect() {
 }
 
 func (w *WebsocketClient) resubscribeAll() error {
+	// Copy subscriptions under lock to avoid concurrent map iteration and write
+	w.mu.RLock()
+	subsCopy := make(map[subKey]bool)
 	for key, subs := range w.subscriptions {
 		if len(subs) > 0 {
-			sub := Subscription{
-				Type:     key.typ,
-				Coin:     key.coin,
-				User:     key.user,
-				Interval: key.interval,
-				Dex:      key.dex,
-			}
-			if err := w.sendSubscribe(sub); err != nil {
-				return fmt.Errorf("resubscribe: %w", err)
-			}
+			subsCopy[key] = true
+		}
+	}
+	w.mu.RUnlock()
+
+	// Send subscribe messages outside of lock
+	for key := range subsCopy {
+		sub := Subscription{
+			Type:     key.typ,
+			Coin:     key.coin,
+			User:     key.user,
+			Interval: key.interval,
+			Dex:      key.dex,
+		}
+		if err := w.sendSubscribe(sub); err != nil {
+			return fmt.Errorf("resubscribe: %w", err)
 		}
 	}
 	return nil
@@ -454,15 +482,15 @@ func (w *WebsocketClient) writeJSON(v any) error {
 		return fmt.Errorf("connection not ready (state: %d)", state)
 	}
 
+	// Hold read lock while using conn to prevent TOCTOU race
 	w.mu.RLock()
-	conn := w.conn
-	w.mu.RUnlock()
+	defer w.mu.RUnlock()
 
-	if conn == nil {
+	if w.conn == nil {
 		return fmt.Errorf("connection closed")
 	}
 
-	return conn.WriteJSON(v)
+	return w.conn.WriteJSON(v)
 }
 
 func (w *WebsocketClient) SubscribeToTrades(coin string, callback func(WSMessage)) (int, error) {
