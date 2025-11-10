@@ -41,12 +41,13 @@ type WebsocketClient struct {
 	reconnectWait time.Duration
 
 	// Connection state management
-	state         atomic.Int32  // Current connection state
-	connReady     chan struct{} // Signaled when connection is established and ready
-	connReadyOnce sync.Once     // Ensures connReady is closed only once per connection
-	stopReconnect chan struct{} // Signal to stop reconnection attempts
-	connCtx       context.Context // Connection-scoped context
-	connCancel    context.CancelFunc // Cancel function for connection context
+	state              atomic.Int32       // Current connection state
+	connReady          chan struct{}      // Signaled when connection is established and ready
+	connReadyOnce      sync.Once          // Ensures connReady is closed only once per connection
+	stopReconnect      chan struct{}      // Signal to stop reconnection attempts
+	connCtx            context.Context    // Connection-scoped context
+	connCancel         context.CancelFunc // Cancel function for connection context
+	MaxReconnectAttempts int              // Maximum reconnection attempts (0 = unlimited, default)
 }
 
 func NewWebsocketClient(baseURL string) *WebsocketClient {
@@ -126,27 +127,16 @@ func (w *WebsocketClient) Connect(ctx context.Context) error {
 	go w.readPump(w.connCtx)
 	go w.pingPump(w.connCtx)
 
-	// Wait for the connection to be ready (initial message received)
-	// or timeout after 5 seconds
-	select {
-	case <-w.connReady:
-		// Connection is ready, proceed with resubscription
-		if err := w.resubscribeAll(); err != nil {
-			return fmt.Errorf("resubscribe failed: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(5 * time.Second):
-		// Timeout waiting for connection ready
-		// Set state to connected anyway (some servers may not send the initial message)
-		w.state.Store(stateConnected)
-		log.Printf("warning: timeout waiting for WebSocket ready signal, assuming connected")
-		if err := w.resubscribeAll(); err != nil {
-			return fmt.Errorf("resubscribe failed: %w", err)
-		}
-		return nil
+	// Mark as connected - readPump will handle validation and set state properly
+	// when first message arrives. If connection fails, readPump triggers reconnection.
+	w.state.Store(stateConnected)
+
+	// Resubscribe to all previous subscriptions
+	if err := w.resubscribeAll(); err != nil {
+		return fmt.Errorf("resubscribe failed: %w", err)
 	}
+
+	return nil
 }
 
 func (w *WebsocketClient) Subscribe(sub Subscription, callback func(WSMessage)) (int, error) {
@@ -376,7 +366,13 @@ func (w *WebsocketClient) reconnect() {
 	log.Printf("Starting reconnection attempts...")
 
 	backoff := w.reconnectWait
-	maxRetries := 200
+	maxRetries := w.MaxReconnectAttempts
+	if maxRetries == 0 {
+		// 0 means unlimited attempts
+		log.Printf("Reconnection attempts: unlimited")
+	} else {
+		log.Printf("Max reconnection attempts: %d", maxRetries)
+	}
 	retryCount := 0
 
 	for {
@@ -388,15 +384,20 @@ func (w *WebsocketClient) reconnect() {
 			w.state.Store(stateDisconnected)
 			return
 		default:
-			if retryCount >= maxRetries {
+			if maxRetries > 0 && retryCount >= maxRetries {
 				log.Printf("Max reconnection attempts (%d) reached, giving up", maxRetries)
 				w.state.Store(stateDisconnected)
 				return
 			}
 
 			retryCount++
-			log.Printf("Reconnection attempt %d/%d (waiting %v)...", retryCount, maxRetries, backoff)
 
+			// Wait BEFORE dialing to prevent reconnection storms
+			if maxRetries > 0 {
+				log.Printf("Reconnection attempt %d/%d (waiting %v)...", retryCount, maxRetries, backoff)
+			} else {
+				log.Printf("Reconnection attempt %d (waiting %v)...", retryCount, backoff)
+			}
 			time.Sleep(backoff)
 
 			// Reset state to disconnected before attempting connect
@@ -415,7 +416,7 @@ func (w *WebsocketClient) reconnect() {
 
 			log.Printf("Reconnection attempt %d failed: %v", retryCount, err)
 
-			// Exponential backoff
+			// Exponential backoff for NEXT attempt
 			backoff *= 2
 			if backoff > time.Minute {
 				backoff = time.Minute
