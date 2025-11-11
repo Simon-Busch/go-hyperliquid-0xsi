@@ -59,6 +59,9 @@ func NewWebsocketClient(baseURL string) *WebsocketClient {
 		reconnectWait: time.Second,
 	}
 
+	// Mark as running so goroutines will start properly
+	wc.running.Store(true)
+
 	// Start goroutines once - they'll live for the lifetime of the client (like Python daemon threads)
 	wc.wg.Add(2)
 	go wc.readLoop()
@@ -68,11 +71,6 @@ func NewWebsocketClient(baseURL string) *WebsocketClient {
 }
 
 func (w *WebsocketClient) Connect(ctx context.Context) error {
-	// First connection - mark as running
-	if !w.running.Load() {
-		w.running.Store(true)
-	}
-
 	// Check if already connected
 	if w.connected.Load() {
 		return nil
@@ -551,41 +549,75 @@ func (w *WebsocketClient) SubscribeToUserTwapHistory(
 }
 
 func matchSubscription(key subKey, msg WSMessage) bool {
+	// First check if channel matches
+	channelMatch := false
 	switch key.typ {
 	case "allMids":
-		return msg.Channel == "allMids"
+		channelMatch = msg.Channel == "allMids"
 	case "notification":
-		return msg.Channel == "notification"
+		channelMatch = msg.Channel == "notification"
 	case "webData2":
-		return msg.Channel == "webData2"
+		channelMatch = msg.Channel == "webData2"
 	case "candle":
-		return msg.Channel == "candle"
+		channelMatch = msg.Channel == "candle"
 	case "l2Book":
-		return msg.Channel == "l2Book"
+		channelMatch = msg.Channel == "l2Book"
 	case "trades":
-		return msg.Channel == "trades"
+		channelMatch = msg.Channel == "trades"
 	case "orderUpdates":
-		return msg.Channel == "orderUpdates"
+		channelMatch = msg.Channel == "orderUpdates"
 	case "userEvents":
 		// Note: userEvents subscription sends messages on "user" channel, not "userEvents"
-		return msg.Channel == "user"
+		channelMatch = msg.Channel == "user"
 	case "userFills":
-		return msg.Channel == "userFills"
+		channelMatch = msg.Channel == "userFills"
 	case "userFundings":
-		return msg.Channel == "userFundings"
+		channelMatch = msg.Channel == "userFundings"
 	case "userNonFundingLedgerUpdates":
-		return msg.Channel == "userNonFundingLedgerUpdates"
+		channelMatch = msg.Channel == "userNonFundingLedgerUpdates"
 	case "activeAssetCtx":
-		return msg.Channel == "activeAssetCtx"
+		channelMatch = msg.Channel == "activeAssetCtx"
 	case "activeAssetData":
-		return msg.Channel == "activeAssetData"
+		channelMatch = msg.Channel == "activeAssetData"
 	case "userTwapSliceFills":
-		return msg.Channel == "userTwapSliceFills"
+		channelMatch = msg.Channel == "userTwapSliceFills"
 	case "userTwapHistory":
-		return msg.Channel == "userTwapHistory"
+		channelMatch = msg.Channel == "userTwapHistory"
 	case "bbo":
-		return msg.Channel == "bbo"
+		channelMatch = msg.Channel == "bbo"
 	default:
 		return false
 	}
+
+	if !channelMatch {
+		return false
+	}
+
+	// For subscriptions that include a coin, check if the coin matches
+	if key.coin != "" {
+		var msgData struct {
+			Coin string `json:"coin"`
+		}
+		if err := json.Unmarshal(msg.Data, &msgData); err != nil {
+			return false
+		}
+		if msgData.Coin != key.coin {
+			return false
+		}
+	}
+
+	// For subscriptions that include a user, check if the user matches
+	if key.user != "" {
+		var msgData struct {
+			User string `json:"user"`
+		}
+		if err := json.Unmarshal(msg.Data, &msgData); err != nil {
+			return false
+		}
+		if msgData.User != key.user {
+			return false
+		}
+	}
+
+	return true
 }
