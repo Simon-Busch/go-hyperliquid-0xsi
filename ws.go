@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -614,7 +615,8 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 		if err := json.Unmarshal(msg.Data, &msgData); err != nil {
 			return false
 		}
-		if msgData.User != key.user {
+		// Case-insensitive comparison for Ethereum addresses
+		if !strings.EqualFold(msgData.User, key.user) {
 			return false
 		}
 	}
