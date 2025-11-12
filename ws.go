@@ -608,7 +608,8 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 	}
 
 	// For subscriptions that include a user, check if the user matches
-	if key.user != "" {
+	// NOTE: orderUpdates messages don't include user in the data - user is implicit from subscription
+	if key.user != "" && key.typ != "orderUpdates" {
 		var msgData struct {
 			User string `json:"user"`
 		}
