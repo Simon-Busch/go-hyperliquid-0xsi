@@ -49,6 +49,16 @@ func newCreateOrderAction(
 	return newCreateOrderActionWithGrouping(e, orders, info, GroupingNA)
 }
 
+// NewCreateOrderActionWithGrouping is the public wrapper for creating order actions
+// This is useful for WebSocket POST requests where you need the action before signing
+func (e *Exchange) NewCreateOrderActionWithGrouping(
+	orders []CreateOrderRequest,
+	info *BuilderInfo,
+	grouping Grouping,
+) (OrderAction, error) {
+	return newCreateOrderActionWithGrouping(e, orders, info, grouping)
+}
+
 // newCreateOrderActionWithGrouping builds an order action allowing a specific grouping
 func newCreateOrderActionWithGrouping(
 	e *Exchange,
