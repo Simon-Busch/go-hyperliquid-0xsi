@@ -46,3 +46,30 @@ type subscriptionCallback struct {
 	id       int
 	callback func(WSMessage)
 }
+
+// WebSocket POST request types
+
+// WsPostRequest is the request structure for WebSocket POST requests
+type WsPostRequest struct {
+	Method  string    `json:"method"` // Always "post"
+	ID      int       `json:"id"`
+	Request WsRequest `json:"request"`
+}
+
+// WsRequest wraps the actual request payload
+type WsRequest struct {
+	Type    string `json:"type"` // "info" or "action"
+	Payload any    `json:"payload"`
+}
+
+// WsPostResponseData is the data field of a POST response message
+type WsPostResponseData struct {
+	ID       int        `json:"id"`
+	Response WsResponse `json:"response"`
+}
+
+// WsResponse contains the actual response payload
+type WsResponse struct {
+	Type    string          `json:"type"` // "info", "action", or "error"
+	Payload json.RawMessage `json:"payload"`
+}

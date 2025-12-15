@@ -40,6 +40,16 @@ type WebsocketClient struct {
 	reconnectAttempts    atomic.Int32
 	MaxReconnectAttempts int // Maximum reconnection attempts (0 = unlimited, default)
 	reconnectTimer       *time.Timer
+
+	// POST request tracking
+	nextPostID      atomic.Int32
+	pendingRequests map[int]*pendingRequest
+	pendingMu       sync.RWMutex
+}
+
+type pendingRequest struct {
+	responseChan chan WsPostResponseData
+	timeout      *time.Timer
 }
 
 func NewWebsocketClient(baseURL string) *WebsocketClient {
@@ -55,9 +65,10 @@ func NewWebsocketClient(baseURL string) *WebsocketClient {
 	wsURL := parsedURL.String()
 
 	wc := &WebsocketClient{
-		url:           wsURL,
-		subscriptions: make(map[subKey]map[int]*subscriptionCallback),
-		reconnectWait: time.Second,
+		url:             wsURL,
+		subscriptions:   make(map[subKey]map[int]*subscriptionCallback),
+		pendingRequests: make(map[int]*pendingRequest),
+		reconnectWait:   time.Second,
 	}
 
 	// Mark as running so goroutines will start properly
@@ -191,6 +202,17 @@ func (w *WebsocketClient) Close() error {
 		w.reconnectTimer.Stop()
 	}
 
+	// Clean up pending POST requests
+	w.pendingMu.Lock()
+	for id, pending := range w.pendingRequests {
+		if pending.timeout != nil {
+			pending.timeout.Stop()
+		}
+		close(pending.responseChan)
+		delete(w.pendingRequests, id)
+	}
+	w.pendingMu.Unlock()
+
 	// Close connection
 	w.mu.Lock()
 	if w.conn != nil {
@@ -203,6 +225,133 @@ func (w *WebsocketClient) Close() error {
 	w.wg.Wait()
 
 	return nil
+}
+
+// PostRequest sends a POST-style request over WebSocket and waits for response
+func (w *WebsocketClient) PostRequest(
+	requestType string,
+	payload any,
+	timeout time.Duration,
+) (*WsPostResponseData, error) {
+	// Check if connected
+	if !w.connected.Load() {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	// Generate unique request ID
+	id := int(w.nextPostID.Add(1))
+
+	// Create response channel
+	responseChan := make(chan WsPostResponseData, 1)
+
+	// Create pending request
+	pending := &pendingRequest{
+		responseChan: responseChan,
+	}
+
+	// Register pending request
+	w.pendingMu.Lock()
+	w.pendingRequests[id] = pending
+	w.pendingMu.Unlock()
+
+	// Set up timeout timer
+	timeoutTimer := time.AfterFunc(timeout, func() {
+		w.pendingMu.Lock()
+		delete(w.pendingRequests, id)
+		w.pendingMu.Unlock()
+		close(responseChan)
+	})
+	pending.timeout = timeoutTimer
+
+	// Defer cleanup
+	defer func() {
+		timeoutTimer.Stop()
+		w.pendingMu.Lock()
+		delete(w.pendingRequests, id)
+		w.pendingMu.Unlock()
+	}()
+
+	// Send request
+	request := WsPostRequest{
+		Method: "post",
+		ID:     id,
+		Request: WsRequest{
+			Type:    requestType,
+			Payload: payload,
+		},
+	}
+
+	if err := w.writeJSON(request); err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	// Wait for response or timeout
+	response, ok := <-responseChan
+	if !ok {
+		return nil, fmt.Errorf("request timeout")
+	}
+
+	return &response, nil
+}
+
+// PostInfoRequest sends an info request over WebSocket
+func (w *WebsocketClient) PostInfoRequest(
+	payload map[string]any,
+	timeout time.Duration,
+) (json.RawMessage, error) {
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
+	resp, err := w.PostRequest("info", payload, timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle error responses
+	if resp.Response.Type == "error" {
+		return nil, fmt.Errorf("info request error: %s", string(resp.Response.Payload))
+	}
+
+	return resp.Response.Payload, nil
+}
+
+// PostActionRequest sends a signed action request over WebSocket
+func (w *WebsocketClient) PostActionRequest(
+	action any,
+	signature SignatureResult,
+	nonce int64,
+	vaultAddress string,
+	timeout time.Duration,
+) (json.RawMessage, error) {
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
+	payload := map[string]any{
+		"action":    action,
+		"nonce":     nonce,
+		"signature": signature,
+	}
+
+	// Handle vault address
+	if vaultAddress != "" {
+		payload["vaultAddress"] = vaultAddress
+	} else {
+		payload["vaultAddress"] = nil
+	}
+
+	resp, err := w.PostRequest("action", payload, timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle error responses
+	if resp.Response.Type == "error" {
+		return nil, fmt.Errorf("action request error: %s", string(resp.Response.Payload))
+	}
+
+	return resp.Response.Payload, nil
 }
 
 // Private methods
@@ -230,7 +379,8 @@ func (w *WebsocketClient) readLoop() {
 
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+			// Only log error if we're still supposed to be running
+			if w.running.Load() && !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 				log.Printf("websocket read error: %v", err)
 			}
 			// Mark as disconnected
@@ -289,6 +439,28 @@ func (w *WebsocketClient) pingLoop() {
 
 // dispatch executes callbacks (copies callbacks first to avoid holding lock - like Python)
 func (w *WebsocketClient) dispatch(msg WSMessage) {
+	// Handle POST responses
+	if msg.Channel == "post" {
+		var postResp WsPostResponseData
+		if err := json.Unmarshal(msg.Data, &postResp); err != nil {
+			log.Printf("failed to unmarshal post response: %v", err)
+			return
+		}
+
+		w.pendingMu.RLock()
+		pending, ok := w.pendingRequests[postResp.ID]
+		w.pendingMu.RUnlock()
+
+		if ok {
+			select {
+			case pending.responseChan <- postResp:
+			default:
+				// Channel already closed (timeout)
+			}
+		}
+		return
+	}
+
 	// Copy callbacks under lock
 	w.mu.RLock()
 	var callbacks []func(WSMessage)
