@@ -19,6 +19,10 @@ const (
 	// pingInterval matches Hyperliquid's expected interval (upstream uses 50s)
 	pingInterval = 50 * time.Second
 
+	// readDeadline is the maximum time to wait for a read before timing out.
+	// Set slightly longer than pingInterval to allow for network latency.
+	readDeadline = pingInterval + 10*time.Second
+
 	// reconnectBaseWait is the initial wait time before reconnecting
 	reconnectBaseWait = time.Second
 
@@ -415,6 +419,11 @@ func (w *WebsocketClient) readPump(ctx context.Context) {
 			return
 		}
 
+		// Set read deadline to detect dead connections.
+		// If no message is received within readDeadline, ReadMessage will error out,
+		// triggering reconnection. This prevents hanging on silent connection failures.
+		_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
+
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			if ctx.Err() == nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
@@ -539,6 +548,18 @@ func (w *WebsocketClient) scheduleReconnect() {
 
 // dispatch routes messages to appropriate callbacks.
 func (w *WebsocketClient) dispatch(msg WSMessage) {
+	// Handle pong responses (sent by Hyperliquid as JSON, not WebSocket protocol pongs)
+	if msg.Channel == "pong" {
+		// Pong received - connection is alive, nothing to do
+		return
+	}
+
+	// Handle subscription confirmations
+	if msg.Channel == "subscriptionResponse" {
+		// Subscription confirmed by server, nothing to do
+		return
+	}
+
 	// Handle POST responses
 	if msg.Channel == "post" {
 		var postResp WsPostResponseData
@@ -715,6 +736,8 @@ func (w *WebsocketClient) SubscribeToUserTwapHistory(user string, callback func(
 // matchSubscription checks if a message matches a subscription key.
 func matchSubscription(key subKey, msg WSMessage) bool {
 	// Channel matching
+	// NOTE: Most subscription types have matching channel names, but there are exceptions:
+	// - "userEvents" subscription sends messages on "user" channel (Hyperliquid API quirk)
 	channelMatch := false
 	switch key.typ {
 	case "allMids":
@@ -732,6 +755,7 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 	case "orderUpdates":
 		channelMatch = msg.Channel == "orderUpdates"
 	case "userEvents":
+		// API quirk: "userEvents" subscription type receives messages on "user" channel
 		channelMatch = msg.Channel == "user"
 	case "userFills":
 		channelMatch = msg.Channel == "userFills"
@@ -757,27 +781,27 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 		return false
 	}
 
-	// Coin matching
-	if key.coin != "" {
-		var msgData struct {
-			Coin string `json:"coin"`
-		}
-		if err := json.Unmarshal(msg.Data, &msgData); err != nil {
-			return false
-		}
-		if msgData.Coin != key.coin {
-			return false
-		}
+	// Early return if no additional filtering needed
+	if key.coin == "" && key.user == "" {
+		return true
 	}
 
-	// User matching (orderUpdates doesn't include user in data)
+	// Single unmarshal for both coin and user matching
+	var msgData struct {
+		Coin string `json:"coin"`
+		User string `json:"user"`
+	}
+	if err := json.Unmarshal(msg.Data, &msgData); err != nil {
+		return false
+	}
+
+	// Coin matching
+	if key.coin != "" && msgData.Coin != key.coin {
+		return false
+	}
+
+	// User matching (orderUpdates doesn't include user in data - user is implicit from subscription)
 	if key.user != "" && key.typ != "orderUpdates" {
-		var msgData struct {
-			User string `json:"user"`
-		}
-		if err := json.Unmarshal(msg.Data, &msgData); err != nil {
-			return false
-		}
 		if !strings.EqualFold(msgData.User, key.user) {
 			return false
 		}
