@@ -16,35 +16,55 @@ import (
 )
 
 const (
-	// pingInterval is the interval for sending ping messages to keep WebSocket alive
-	pingInterval = 10 * time.Second
+	// pingInterval matches Hyperliquid's expected interval (upstream uses 50s)
+	pingInterval = 50 * time.Second
+
+	// reconnectBaseWait is the initial wait time before reconnecting
+	reconnectBaseWait = time.Second
+
+	// maxReconnectWait caps the exponential backoff
+	maxReconnectWait = time.Minute
+
+	// connectTimeout for dial operations
+	connectTimeout = 10 * time.Second
 )
 
+// WebsocketClient manages a WebSocket connection to the Hyperliquid API.
+// It handles automatic reconnection, subscription management, and POST requests.
 type WebsocketClient struct {
-	url           string
-	conn          *websocket.Conn
-	mu            sync.RWMutex
-	writeMu       sync.Mutex
+	url string
+
+	// Connection state (atomic for lock-free reads)
+	connected atomic.Bool
+
+	// Connection and synchronization
+	conn    *websocket.Conn
+	connMu  sync.RWMutex  // Protects conn
+	writeMu sync.Mutex    // Serializes writes
+	cancel  func()        // Cancels current connection's goroutines
+	wg      sync.WaitGroup
+
+	// Subscription management
 	subscriptions map[subKey]map[int]*subscriptionCallback
+	subMu         sync.RWMutex
 	nextSubID     atomic.Int32
 
-	// Simple state management (like Python)
-	running   atomic.Bool // Should the client be running?
-	connected atomic.Bool // Is the connection established?
-
-	// Goroutine lifecycle management
-	wg sync.WaitGroup // Track goroutines for clean shutdown
-
 	// Reconnection settings
-	reconnectWait        time.Duration
-	reconnectAttempts    atomic.Int32
-	MaxReconnectAttempts int // Maximum reconnection attempts (0 = unlimited, default)
+	reconnectMu          sync.Mutex
 	reconnectTimer       *time.Timer
+	reconnectAttempts    int
+	MaxReconnectAttempts int           // 0 = unlimited (default)
+	ReconnectWait        time.Duration // Can be customized
 
 	// POST request tracking
 	nextPostID      atomic.Int32
 	pendingRequests map[int]*pendingRequest
 	pendingMu       sync.RWMutex
+
+	// Lifecycle
+	closed    atomic.Bool
+	closedMu  sync.Mutex
+	closeOnce sync.Once
 }
 
 type pendingRequest struct {
@@ -52,10 +72,13 @@ type pendingRequest struct {
 	timeout      *time.Timer
 }
 
+// NewWebsocketClient creates a new WebSocket client for the given base URL.
+// The client is not connected until Connect() is called.
 func NewWebsocketClient(baseURL string) *WebsocketClient {
 	if baseURL == "" {
 		baseURL = MainnetAPIURL
 	}
+
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		log.Fatalf("invalid URL: %v", err)
@@ -64,78 +87,94 @@ func NewWebsocketClient(baseURL string) *WebsocketClient {
 	parsedURL.Path = "/ws"
 	wsURL := parsedURL.String()
 
-	wc := &WebsocketClient{
+	return &WebsocketClient{
 		url:             wsURL,
 		subscriptions:   make(map[subKey]map[int]*subscriptionCallback),
 		pendingRequests: make(map[int]*pendingRequest),
-		reconnectWait:   time.Second,
+		ReconnectWait:   reconnectBaseWait,
 	}
-
-	// Mark as running so goroutines will start properly
-	wc.running.Store(true)
-
-	// Start goroutines once - they'll live for the lifetime of the client (like Python daemon threads)
-	wc.wg.Add(2)
-	go wc.readLoop()
-	go wc.pingLoop()
-
-	return wc
 }
 
+// Connect establishes the WebSocket connection.
+// It's safe to call multiple times - subsequent calls return immediately if already connected.
 func (w *WebsocketClient) Connect(ctx context.Context) error {
-	// Check if already connected
+	if w.closed.Load() {
+		return fmt.Errorf("client is closed")
+	}
+
 	if w.connected.Load() {
 		return nil
 	}
 
-	w.mu.Lock()
+	w.connMu.Lock()
+	defer w.connMu.Unlock()
 
-	// Double check after acquiring lock
+	// Double-check after acquiring lock
 	if w.conn != nil && w.connected.Load() {
-		w.mu.Unlock()
 		return nil
 	}
 
+	// Clean up any existing connection
+	if w.conn != nil {
+		_ = w.conn.Close()
+		w.conn = nil
+	}
+
+	// Cancel previous goroutines if any
+	if w.cancel != nil {
+		w.cancel()
+		w.wg.Wait()
+	}
+
+	// Dial new connection
 	dialer := websocket.Dialer{}
+	dialCtx, dialCancel := context.WithTimeout(ctx, connectTimeout)
+	defer dialCancel()
 
 	//nolint:bodyclose // WebSocket connections don't have response bodies to close
-	conn, _, err := dialer.DialContext(ctx, w.url, nil)
+	conn, _, err := dialer.DialContext(dialCtx, w.url, nil)
 	if err != nil {
-		w.mu.Unlock()
 		return fmt.Errorf("websocket dial: %w", err)
 	}
 
 	w.conn = conn
-	w.mu.Unlock()
-
-	// Mark as connected
 	w.connected.Store(true)
 
-	// Reset reconnection attempts on successful connection
-	w.reconnectAttempts.Store(0)
+	// Reset reconnection state on successful connection
+	w.reconnectMu.Lock()
+	w.reconnectAttempts = 0
+	w.ReconnectWait = reconnectBaseWait
+	w.reconnectMu.Unlock()
+
+	// Create context for this connection's goroutines
+	connCtx, cancel := context.WithCancel(context.Background())
+	w.cancel = cancel
+
+	// Start read and ping pumps (per-connection, like upstream)
+	w.wg.Add(2)
+	go w.readPump(connCtx)
+	go w.pingPump(connCtx)
 
 	// Resubscribe to all previous subscriptions
 	if err := w.resubscribeAll(); err != nil {
-		// If resubscribe fails, clean up the connection
-		w.mu.Lock()
-		if w.conn != nil {
-			_ = w.conn.Close()
-			w.conn = nil
-		}
-		w.mu.Unlock()
 		w.connected.Store(false)
+		cancel()
+		_ = conn.Close()
+		w.conn = nil
 		return fmt.Errorf("resubscribe failed: %w", err)
 	}
 
 	return nil
 }
 
+// Subscribe registers a callback for the given subscription.
+// Returns a subscription ID that can be used to unsubscribe.
 func (w *WebsocketClient) Subscribe(sub Subscription, callback func(WSMessage)) (int, error) {
 	if callback == nil {
 		return 0, fmt.Errorf("callback cannot be nil")
 	}
 
-	w.mu.Lock()
+	w.subMu.Lock()
 	key := sub.key()
 	id := int(w.nextSubID.Add(1))
 
@@ -147,30 +186,31 @@ func (w *WebsocketClient) Subscribe(sub Subscription, callback func(WSMessage)) 
 		id:       id,
 		callback: callback,
 	}
-	w.mu.Unlock()
+	w.subMu.Unlock()
 
-	// Send subscribe outside of lock to avoid deadlock with writeJSON
+	// Send subscribe message (outside lock to avoid deadlock)
 	if err := w.sendSubscribe(sub); err != nil {
-		w.mu.Lock()
+		w.subMu.Lock()
 		delete(w.subscriptions[key], id)
-		w.mu.Unlock()
+		w.subMu.Unlock()
 		return 0, fmt.Errorf("subscribe: %w", err)
 	}
 
 	return id, nil
 }
 
+// Unsubscribe removes a subscription by ID.
 func (w *WebsocketClient) Unsubscribe(sub Subscription, id int) error {
-	w.mu.Lock()
+	w.subMu.Lock()
 	key := sub.key()
 	subs, ok := w.subscriptions[key]
 	if !ok {
-		w.mu.Unlock()
+		w.subMu.Unlock()
 		return fmt.Errorf("subscription not found")
 	}
 
 	if _, ok := subs[id]; !ok {
-		w.mu.Unlock()
+		w.subMu.Unlock()
 		return fmt.Errorf("subscription ID not found")
 	}
 
@@ -180,9 +220,8 @@ func (w *WebsocketClient) Unsubscribe(sub Subscription, id int) error {
 	if shouldUnsubscribe {
 		delete(w.subscriptions, key)
 	}
-	w.mu.Unlock()
+	w.subMu.Unlock()
 
-	// Send unsubscribe outside of lock to avoid deadlock with writeJSON
 	if shouldUnsubscribe {
 		if err := w.sendUnsubscribe(sub); err != nil {
 			return fmt.Errorf("unsubscribe: %w", err)
@@ -192,78 +231,82 @@ func (w *WebsocketClient) Unsubscribe(sub Subscription, id int) error {
 	return nil
 }
 
+// Close shuts down the WebSocket client and releases all resources.
 func (w *WebsocketClient) Close() error {
-	// Mark as not running
-	w.running.Store(false)
-	w.connected.Store(false)
+	var err error
+	w.closeOnce.Do(func() {
+		w.closed.Store(true)
+		w.connected.Store(false)
 
-	// Cancel any pending reconnection timer
-	if w.reconnectTimer != nil {
-		w.reconnectTimer.Stop()
-	}
-
-	// Clean up pending POST requests
-	w.pendingMu.Lock()
-	for id, pending := range w.pendingRequests {
-		if pending.timeout != nil {
-			pending.timeout.Stop()
+		// Cancel reconnection timer
+		w.reconnectMu.Lock()
+		if w.reconnectTimer != nil {
+			w.reconnectTimer.Stop()
+			w.reconnectTimer = nil
 		}
-		close(pending.responseChan)
-		delete(w.pendingRequests, id)
-	}
-	w.pendingMu.Unlock()
+		w.reconnectMu.Unlock()
 
-	// Close connection
-	w.mu.Lock()
-	if w.conn != nil {
-		_ = w.conn.Close()
-		w.conn = nil
-	}
-	w.mu.Unlock()
+		// Clean up pending POST requests
+		w.pendingMu.Lock()
+		for id, pending := range w.pendingRequests {
+			if pending.timeout != nil {
+				pending.timeout.Stop()
+			}
+			close(pending.responseChan)
+			delete(w.pendingRequests, id)
+		}
+		w.pendingMu.Unlock()
 
-	// Wait for goroutines to exit (like Python's thread.join())
-	w.wg.Wait()
+		// Cancel goroutines and close connection
+		w.connMu.Lock()
+		if w.cancel != nil {
+			w.cancel()
+		}
+		if w.conn != nil {
+			err = w.conn.Close()
+			w.conn = nil
+		}
+		w.connMu.Unlock()
 
-	return nil
+		// Wait for goroutines to finish
+		w.wg.Wait()
+	})
+	return err
 }
 
-// PostRequest sends a POST-style request over WebSocket and waits for response
+// PostRequest sends a POST-style request over WebSocket and waits for response.
 func (w *WebsocketClient) PostRequest(
 	requestType string,
 	payload any,
 	timeout time.Duration,
 ) (*WsPostResponseData, error) {
-	// Check if connected
 	if !w.connected.Load() {
 		return nil, fmt.Errorf("not connected")
 	}
 
-	// Generate unique request ID
 	id := int(w.nextPostID.Add(1))
-
-	// Create response channel
 	responseChan := make(chan WsPostResponseData, 1)
 
-	// Create pending request
 	pending := &pendingRequest{
 		responseChan: responseChan,
 	}
 
-	// Register pending request
 	w.pendingMu.Lock()
 	w.pendingRequests[id] = pending
 	w.pendingMu.Unlock()
 
-	// Set up timeout timer
+	// Setup timeout
 	timeoutTimer := time.AfterFunc(timeout, func() {
 		w.pendingMu.Lock()
-		delete(w.pendingRequests, id)
+		if _, ok := w.pendingRequests[id]; ok {
+			delete(w.pendingRequests, id)
+			close(responseChan)
+		}
 		w.pendingMu.Unlock()
-		close(responseChan)
 	})
 	pending.timeout = timeoutTimer
 
-	// Defer cleanup
+	// Cleanup on exit
 	defer func() {
 		timeoutTimer.Stop()
 		w.pendingMu.Lock()
@@ -285,7 +328,7 @@ func (w *WebsocketClient) PostRequest(
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	// Wait for response or timeout
+	// Wait for response
 	response, ok := <-responseChan
 	if !ok {
 		return nil, fmt.Errorf("request timeout")
@@ -294,7 +337,7 @@ func (w *WebsocketClient) PostRequest(
 	return &response, nil
 }
 
-// PostInfoRequest sends an info request over WebSocket
+// PostInfoRequest sends an info request over WebSocket.
 func (w *WebsocketClient) PostInfoRequest(
 	payload map[string]any,
 	timeout time.Duration,
@@ -308,7 +351,6 @@ func (w *WebsocketClient) PostInfoRequest(
 		return nil, err
 	}
 
-	// Handle error responses
 	if resp.Response.Type == "error" {
 		return nil, fmt.Errorf("info request error: %s", string(resp.Response.Payload))
 	}
@@ -316,7 +358,7 @@ func (w *WebsocketClient) PostInfoRequest(
 	return resp.Response.Payload, nil
 }
 
-// PostActionRequest sends a signed action request over WebSocket
+// PostActionRequest sends a signed action request over WebSocket.
 func (w *WebsocketClient) PostActionRequest(
 	action any,
 	signature SignatureResult,
@@ -334,7 +376,6 @@ func (w *WebsocketClient) PostActionRequest(
 		"signature": signature,
 	}
 
-	// Handle vault address
 	if vaultAddress != "" {
 		payload["vaultAddress"] = vaultAddress
 	} else {
@@ -346,7 +387,6 @@ func (w *WebsocketClient) PostActionRequest(
 		return nil, err
 	}
 
-	// Handle error responses
 	if resp.Response.Type == "error" {
 		return nil, fmt.Errorf("action request error: %s", string(resp.Response.Payload))
 	}
@@ -354,54 +394,36 @@ func (w *WebsocketClient) PostActionRequest(
 	return resp.Response.Payload, nil
 }
 
-// Private methods
-
-// readLoop runs for the lifetime of the client (like Python's daemon thread)
-func (w *WebsocketClient) readLoop() {
+// readPump reads messages from the WebSocket connection.
+// Runs for the lifetime of a single connection (context-aware, like upstream).
+func (w *WebsocketClient) readPump(ctx context.Context) {
 	defer w.wg.Done()
+	defer w.handleDisconnect()
 
-	for w.running.Load() {
-		// Idle while not connected
-		if !w.connected.Load() {
-			time.Sleep(100 * time.Millisecond)
-			continue
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
 		}
 
-		w.mu.RLock()
+		w.connMu.RLock()
 		conn := w.conn
-		w.mu.RUnlock()
+		w.connMu.RUnlock()
 
 		if conn == nil {
-			w.connected.Store(false)
-			time.Sleep(100 * time.Millisecond)
-			continue
+			return
 		}
 
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			// Only log error if we're still supposed to be running
-			if w.running.Load() && !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+			if ctx.Err() == nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 				log.Printf("websocket read error: %v", err)
 			}
-			// Mark as disconnected
-			w.connected.Store(false)
-
-			// Close connection
-			w.mu.Lock()
-			if w.conn != nil {
-				_ = w.conn.Close()
-				w.conn = nil
-			}
-			w.mu.Unlock()
-
-			// Trigger reconnection
-			if w.running.Load() {
-				w.scheduleReconnect()
-			}
-			continue
+			return // Exit pump, handleDisconnect will trigger reconnection
 		}
 
-		// Skip server hello message
+		// Skip server hello
 		if string(msg) == "Websocket connection established." {
 			continue
 		}
@@ -417,27 +439,105 @@ func (w *WebsocketClient) readLoop() {
 	}
 }
 
-// pingLoop runs for the lifetime of the client (like Python's daemon thread)
-func (w *WebsocketClient) pingLoop() {
+// pingPump sends periodic ping messages to keep the connection alive.
+// Runs for the lifetime of a single connection (context-aware, like upstream).
+func (w *WebsocketClient) pingPump(ctx context.Context) {
 	defer w.wg.Done()
 
 	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 
-	for w.running.Load() {
-		<-ticker.C
-
-		// Only send ping if connected
-		if w.connected.Load() {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 			if err := w.sendPing(); err != nil {
 				log.Printf("ping error: %v", err)
-				// Don't exit - readLoop will handle disconnection
+				// Don't return here - readPump will detect the error
+				// and handleDisconnect will trigger reconnection
 			}
 		}
 	}
 }
 
-// dispatch executes callbacks (copies callbacks first to avoid holding lock - like Python)
+// handleDisconnect is called when the connection is lost.
+// It marks the client as disconnected and schedules reconnection.
+func (w *WebsocketClient) handleDisconnect() {
+	if w.closed.Load() {
+		return
+	}
+
+	w.connected.Store(false)
+
+	// Close connection cleanly
+	w.connMu.Lock()
+	if w.conn != nil {
+		_ = w.conn.Close()
+		w.conn = nil
+	}
+	w.connMu.Unlock()
+
+	// Schedule reconnection
+	w.scheduleReconnect()
+}
+
+// scheduleReconnect schedules an asynchronous reconnection attempt with exponential backoff and jitter.
+func (w *WebsocketClient) scheduleReconnect() {
+	if w.closed.Load() {
+		return
+	}
+
+	w.reconnectMu.Lock()
+	defer w.reconnectMu.Unlock()
+
+	// Stop existing timer
+	if w.reconnectTimer != nil {
+		w.reconnectTimer.Stop()
+	}
+
+	w.reconnectAttempts++
+	attempts := w.reconnectAttempts
+
+	// Check max attempts
+	if w.MaxReconnectAttempts > 0 && attempts > w.MaxReconnectAttempts {
+		log.Printf("Max reconnection attempts (%d) reached, giving up", w.MaxReconnectAttempts)
+		return
+	}
+
+	// Calculate backoff with jitter (±20%)
+	backoff := w.ReconnectWait * time.Duration(1<<(attempts-1))
+	if backoff > maxReconnectWait {
+		backoff = maxReconnectWait
+	}
+	jitter := time.Duration(float64(backoff) * 0.2 * (2*rand.Float64() - 1))
+	delay := backoff + jitter
+	if delay < time.Second {
+		delay = time.Second
+	}
+
+	log.Printf("Reconnection attempt %d in %v...", attempts, delay)
+
+	// Schedule reconnection (non-blocking, like timer-based approach)
+	w.reconnectTimer = time.AfterFunc(delay, func() {
+		if w.closed.Load() || w.connected.Load() {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+		err := w.Connect(ctx)
+		cancel()
+
+		if err != nil {
+			log.Printf("Reconnection attempt %d failed: %v", attempts, err)
+			w.scheduleReconnect()
+		} else {
+			log.Printf("Reconnection successful after %d attempts", attempts)
+		}
+	})
+}
+
+// dispatch routes messages to appropriate callbacks.
 func (w *WebsocketClient) dispatch(msg WSMessage) {
 	// Handle POST responses
 	if msg.Channel == "post" {
@@ -455,14 +555,14 @@ func (w *WebsocketClient) dispatch(msg WSMessage) {
 			select {
 			case pending.responseChan <- postResp:
 			default:
-				// Channel already closed (timeout)
+				// Channel closed (timeout) or full
 			}
 		}
 		return
 	}
 
-	// Copy callbacks under lock
-	w.mu.RLock()
+	// Copy matching callbacks under lock
+	w.subMu.RLock()
 	var callbacks []func(WSMessage)
 	for key, subs := range w.subscriptions {
 		if matchSubscription(key, msg) {
@@ -471,77 +571,26 @@ func (w *WebsocketClient) dispatch(msg WSMessage) {
 			}
 		}
 	}
-	w.mu.RUnlock()
+	w.subMu.RUnlock()
 
-	// Execute callbacks without holding lock (prevents callback from blocking other operations)
+	// Execute callbacks without holding lock
 	for _, cb := range callbacks {
 		cb(msg)
 	}
 }
 
-// scheduleReconnect uses timer-based reconnection (like Python's threading.Timer)
-func (w *WebsocketClient) scheduleReconnect() {
-	attempts := w.reconnectAttempts.Add(1)
-
-	// Check max attempts
-	maxRetries := w.MaxReconnectAttempts
-	if maxRetries > 0 && int(attempts) > maxRetries {
-		log.Printf("Max reconnection attempts (%d) reached, giving up", maxRetries)
-		w.running.Store(false)
-		return
-	}
-
-	// Calculate backoff with jitter (like Python)
-	backoff := w.reconnectWait * time.Duration(1<<(attempts-1))
-	if backoff > time.Minute {
-		backoff = time.Minute
-	}
-	// Add jitter (±20%)
-	jitter := time.Duration(float64(backoff) * 0.2 * (2*rand.Float64() - 1))
-	delay := backoff + jitter
-	if delay < time.Second {
-		delay = time.Second
-	}
-
-	log.Printf("Reconnection attempt %d (waiting %v)...", attempts, delay)
-
-	// Stop existing timer if any
-	if w.reconnectTimer != nil {
-		w.reconnectTimer.Stop()
-	}
-
-	// Single-shot timer (like Python's threading.Timer)
-	w.reconnectTimer = time.AfterFunc(delay, func() {
-		if w.running.Load() && !w.connected.Load() {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := w.Connect(ctx)
-			cancel()
-
-			if err == nil {
-				log.Printf("Reconnection successful after %d attempts", attempts)
-				w.reconnectWait = time.Second // Reset backoff
-			} else {
-				log.Printf("Reconnection attempt %d failed: %v", attempts, err)
-				// Schedule next attempt
-				w.scheduleReconnect()
-			}
-		}
-	})
-}
-
+// resubscribeAll resends subscribe messages for all active subscriptions.
 func (w *WebsocketClient) resubscribeAll() error {
-	// Copy subscriptions under lock to avoid concurrent map iteration and write
-	w.mu.RLock()
-	subsCopy := make(map[subKey]bool)
+	w.subMu.RLock()
+	keys := make([]subKey, 0, len(w.subscriptions))
 	for key, subs := range w.subscriptions {
 		if len(subs) > 0 {
-			subsCopy[key] = true
+			keys = append(keys, key)
 		}
 	}
-	w.mu.RUnlock()
+	w.subMu.RUnlock()
 
-	// Send subscribe messages outside of lock
-	for key := range subsCopy {
+	for _, key := range keys {
 		sub := Subscription{
 			Type:     key.typ,
 			Coin:     key.coin,
@@ -550,7 +599,7 @@ func (w *WebsocketClient) resubscribeAll() error {
 			Dex:      key.dex,
 		}
 		if err := w.sendSubscribe(sub); err != nil {
-			return fmt.Errorf("resubscribe: %w", err)
+			return fmt.Errorf("resubscribe %s: %w", key.typ, err)
 		}
 	}
 	return nil
@@ -578,151 +627,94 @@ func (w *WebsocketClient) writeJSON(v any) error {
 	w.writeMu.Lock()
 	defer w.writeMu.Unlock()
 
-	// Check if connected
 	if !w.connected.Load() {
 		return fmt.Errorf("not connected")
 	}
 
-	// Hold read lock while using conn to prevent TOCTOU race
-	w.mu.RLock()
-	defer w.mu.RUnlock()
+	w.connMu.RLock()
+	conn := w.conn
+	w.connMu.RUnlock()
 
-	if w.conn == nil {
+	if conn == nil {
 		return fmt.Errorf("connection closed")
 	}
 
-	return w.conn.WriteJSON(v)
+	return conn.WriteJSON(v)
 }
 
+// Convenience subscription methods
+
 func (w *WebsocketClient) SubscribeToTrades(coin string, callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "trades", Coin: coin}
-	return w.Subscribe(sub, callback)
+	return w.Subscribe(Subscription{Type: "trades", Coin: coin}, callback)
 }
 
 func (w *WebsocketClient) SubscribeToOrderbook(coin string, callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "l2Book", Coin: coin}
-	return w.Subscribe(sub, callback)
+	return w.Subscribe(Subscription{Type: "l2Book", Coin: coin}, callback)
 }
 
-// SubscribeToAllMids subscribes to all mid prices
 func (w *WebsocketClient) SubscribeToAllMids(callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "allMids"}
-	return w.Subscribe(sub, callback)
+	return w.Subscribe(Subscription{Type: "allMids"}, callback)
 }
 
-// SubscribeToAllMidsWithDex subscribes to all mid prices with specific DEX
 func (w *WebsocketClient) SubscribeToAllMidsWithDex(dex string, callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "allMids", Dex: dex}
-	return w.Subscribe(sub, callback)
+	return w.Subscribe(Subscription{Type: "allMids", Dex: dex}, callback)
 }
 
-// SubscribeToUserEvents subscribes to user events
-func (w *WebsocketClient) SubscribeToUserEvents(
-	user string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "userEvents", User: user}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToUserEvents(user string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "userEvents", User: user}, callback)
 }
 
-// SubscribeToUserFills subscribes to user fills
 func (w *WebsocketClient) SubscribeToUserFills(user string, callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "userFills", User: user}
-	return w.Subscribe(sub, callback)
+	return w.Subscribe(Subscription{Type: "userFills", User: user}, callback)
 }
 
-// SubscribeToCandles subscribes to candle data
-func (w *WebsocketClient) SubscribeToCandles(
-	coin, interval string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "candle", Coin: coin, Interval: interval}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToCandles(coin, interval string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "candle", Coin: coin, Interval: interval}, callback)
 }
 
-// SubscribeToOrderUpdates subscribes to order updates for a specific user
 func (w *WebsocketClient) SubscribeToOrderUpdates(user string, callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "orderUpdates", User: user}
-	return w.Subscribe(sub, callback)
+	return w.Subscribe(Subscription{Type: "orderUpdates", User: user}, callback)
 }
 
-// SubscribeToUserFundings subscribes to user funding updates
-func (w *WebsocketClient) SubscribeToUserFundings(
-	user string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "userFundings", User: user}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToUserFundings(user string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "userFundings", User: user}, callback)
 }
 
-// SubscribeToUserNonFundingLedgerUpdates subscribes to user non-funding ledger updates
-func (w *WebsocketClient) SubscribeToUserNonFundingLedgerUpdates(
-	user string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "userNonFundingLedgerUpdates", User: user}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToUserNonFundingLedgerUpdates(user string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "userNonFundingLedgerUpdates", User: user}, callback)
 }
 
-// SubscribeToWebData2 subscribes to web data v2
 func (w *WebsocketClient) SubscribeToWebData2(user string, callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "webData2", User: user}
-	return w.Subscribe(sub, callback)
+	return w.Subscribe(Subscription{Type: "webData2", User: user}, callback)
 }
 
-// SubscribeToBBO subscribes to best bid/offer data
 func (w *WebsocketClient) SubscribeToBBO(coin string, callback func(WSMessage)) (int, error) {
-	sub := Subscription{Type: "bbo", Coin: coin}
-	return w.Subscribe(sub, callback)
+	return w.Subscribe(Subscription{Type: "bbo", Coin: coin}, callback)
 }
 
-// SubscribeToActiveAssetCtx subscribes to active asset context
-func (w *WebsocketClient) SubscribeToActiveAssetCtx(
-	coin string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "activeAssetCtx", Coin: coin}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToActiveAssetCtx(coin string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "activeAssetCtx", Coin: coin}, callback)
 }
 
-// SubscribeToNotification subscribes to notifications for a specific user
-func (w *WebsocketClient) SubscribeToNotification(
-	user string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "notification", User: user}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToNotification(user string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "notification", User: user}, callback)
 }
 
-// SubscribeToActiveAssetData subscribes to active asset data for a user and coin
-func (w *WebsocketClient) SubscribeToActiveAssetData(
-	user, coin string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "activeAssetData", User: user, Coin: coin}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToActiveAssetData(user, coin string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "activeAssetData", User: user, Coin: coin}, callback)
 }
 
-// SubscribeToUserTwapSliceFills subscribes to user TWAP slice fills
-func (w *WebsocketClient) SubscribeToUserTwapSliceFills(
-	user string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "userTwapSliceFills", User: user}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToUserTwapSliceFills(user string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "userTwapSliceFills", User: user}, callback)
 }
 
-// SubscribeToUserTwapHistory subscribes to user TWAP history
-func (w *WebsocketClient) SubscribeToUserTwapHistory(
-	user string,
-	callback func(WSMessage),
-) (int, error) {
-	sub := Subscription{Type: "userTwapHistory", User: user}
-	return w.Subscribe(sub, callback)
+func (w *WebsocketClient) SubscribeToUserTwapHistory(user string, callback func(WSMessage)) (int, error) {
+	return w.Subscribe(Subscription{Type: "userTwapHistory", User: user}, callback)
 }
 
+// matchSubscription checks if a message matches a subscription key.
 func matchSubscription(key subKey, msg WSMessage) bool {
-	// First check if channel matches
+	// Channel matching
 	channelMatch := false
 	switch key.typ {
 	case "allMids":
@@ -740,7 +732,6 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 	case "orderUpdates":
 		channelMatch = msg.Channel == "orderUpdates"
 	case "userEvents":
-		// Note: userEvents subscription sends messages on "user" channel, not "userEvents"
 		channelMatch = msg.Channel == "user"
 	case "userFills":
 		channelMatch = msg.Channel == "userFills"
@@ -766,7 +757,7 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 		return false
 	}
 
-	// For subscriptions that include a coin, check if the coin matches
+	// Coin matching
 	if key.coin != "" {
 		var msgData struct {
 			Coin string `json:"coin"`
@@ -779,8 +770,7 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 		}
 	}
 
-	// For subscriptions that include a user, check if the user matches
-	// NOTE: orderUpdates messages don't include user in the data - user is implicit from subscription
+	// User matching (orderUpdates doesn't include user in data)
 	if key.user != "" && key.typ != "orderUpdates" {
 		var msgData struct {
 			User string `json:"user"`
@@ -788,7 +778,6 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 		if err := json.Unmarshal(msg.Data, &msgData); err != nil {
 			return false
 		}
-		// Case-insensitive comparison for Ethereum addresses
 		if !strings.EqualFold(msgData.User, key.user) {
 			return false
 		}
