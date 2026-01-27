@@ -39,6 +39,7 @@ func (e *Exchange) BulkCancel(
 
 	action := CancelAction{
 		Type:    "cancel",
+		Dex:     e.dex, // Include dex for HIP-3 builder-deployed perps
 		Cancels: cancels,
 	}
 
@@ -69,13 +70,14 @@ func (e *Exchange) BulkCancelByCloids(
 ) (res *APIResponse[CancelOrderResponse], err error) {
 	cancels := slices.Map(requests, func(req CancelOrderRequestByCloid) CancelByCloidWire {
 		return CancelByCloidWire{
-			Asset:   e.info.NameToAsset(req.Coin),
-			OrderID: req.Cloid,
+			Asset:    e.info.NameToAsset(req.Coin),
+			ClientID: req.Cloid,
 		}
 	})
 
 	action := CancelByCloidAction{
 		Type:    "cancelByCloid",
+		Dex:     e.dex, // Include dex for HIP-3 builder-deployed perps
 		Cancels: cancels,
 	}
 

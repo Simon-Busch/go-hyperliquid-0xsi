@@ -28,13 +28,18 @@ const (
 )
 
 type AssetInfo struct {
-	Name        string `json:"name"`
-	SzDecimals  int    `json:"szDecimals"`
-	MaxLeverage int    `json:"maxLeverage"`
+	Name          string `json:"name"`
+	SzDecimals    int    `json:"szDecimals"`
+	MaxLeverage   int    `json:"maxLeverage"`
+	MarginTableId int    `json:"marginTableId"`
+	OnlyIsolated  bool   `json:"onlyIsolated"`
+	IsDelisted    bool   `json:"isDelisted"`
 }
 
 type Meta struct {
-	Universe []AssetInfo `json:"universe"`
+	Universe        []AssetInfo   `json:"universe"`
+	MarginTables    []MarginTable `json:"marginTables"`
+	CollateralToken int           `json:"collateralToken"`
 }
 
 type SpotAssetInfo struct {
@@ -95,8 +100,9 @@ type MarginTier struct {
 
 // MarginTable represents a margin table with description and tiers
 type MarginTable struct {
-	Description string        `json:"description"`
-	MarginTiers []MarginTier  `json:"marginTiers"`
+	ID          int
+	Description string       `json:"description"`
+	MarginTiers []MarginTier `json:"marginTiers"`
 }
 
 // MetaAndAssetCtxsResponse represents the response from the metaAndAssetCtxs endpoint
@@ -497,4 +503,37 @@ type PerpDeployResponse struct {
 type TxStatus struct {
 	Coin   string `json:"coin"`
 	Status string `json:"status"`
+}
+
+// PerpDex represents a perpetual DEX
+type PerpDex struct {
+	Name                     string     `json:"name"`
+	FullName                 string     `json:"fullName"`
+	Deployer                 string     `json:"deployer"`
+	OracleUpdater            *string    `json:"oracleUpdater"`
+	FeeRecipient             *string    `json:"feeRecipient"`
+	AssetToStreamingOiCap    [][]string `json:"assetToStreamingOiCap"`    // Array of [coin, cap] tuples
+	AssetToFundingMultiplier [][]string `json:"assetToFundingMultiplier"` // Array of [coin, multiplier] tuples
+}
+
+// PerpDexLimits represents limits for a builder-deployed perp DEX
+type PerpDexLimits struct {
+	TotalOiCap     string     `json:"totalOiCap"`
+	OiSzCapPerPerp string     `json:"oiSzCapPerPerp"`
+	MaxTransferNtl string     `json:"maxTransferNtl"`
+	CoinToOiCap    [][]string `json:"coinToOiCap"` // Array of [coin, cap] tuples
+}
+
+// PerpDexStatus represents status for a builder-deployed perp DEX
+type PerpDexStatus struct {
+	TotalNetDeposit string `json:"totalNetDeposit"`
+}
+
+// PerpDeployAuctionStatus represents the status of a perp deploy auction
+type PerpDeployAuctionStatus struct {
+	StartTimeSeconds int64   `json:"startTimeSeconds"`
+	DurationSeconds  int64   `json:"durationSeconds"`
+	StartGas         string  `json:"startGas"`
+	CurrentGas       string  `json:"currentGas"`
+	EndGas           *string `json:"endGas"`
 }

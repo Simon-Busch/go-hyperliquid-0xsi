@@ -12,18 +12,22 @@ type CancelOrderWire struct {
 // CancelAction represents the cancel action
 type CancelAction struct {
 	Type    string            `json:"type"    msgpack:"type"`
+	Dex     string            `json:"dex,omitempty" msgpack:"dex,omitempty"`
 	Cancels []CancelOrderWire `json:"cancels" msgpack:"cancels"`
 }
 
 // CancelByCloidWire represents cancel by cloid item wire format
+// NB: the CancelByCloidWire MUST have `asset` and not `a` like CancelOrderWire
+// See: https://github.com/hyperliquid-dex/hyperliquid-python-sdk/blob/master/hyperliquid/exchange.py
 type CancelByCloidWire struct {
-	Asset   int    `json:"a"     msgpack:"a"`
-	OrderID string `json:"cloid" msgpack:"cloid"`
+	Asset    int    `json:"asset" msgpack:"asset"`
+	ClientID string `json:"cloid" msgpack:"cloid"`
 }
 
 // CancelByCloidAction represents the cancel by cloid action
 type CancelByCloidAction struct {
 	Type    string              `json:"type"    msgpack:"type"`
+	Dex     string              `json:"dex,omitempty" msgpack:"dex,omitempty"`
 	Cancels []CancelByCloidWire `json:"cancels" msgpack:"cancels"`
 }
 
@@ -96,8 +100,10 @@ type OrderWire struct {
 }
 
 // OrderAction represents the order action with deterministic field ordering
+// CRITICAL: Field order MUST match Python SDK insertion order for msgpack hash consistency
 type OrderAction struct {
 	Type     string       `json:"type"              msgpack:"type"`
+	Dex      string       `json:"dex,omitempty"     msgpack:"dex,omitempty"`
 	Orders   []OrderWire  `json:"orders"            msgpack:"orders"`
 	Grouping string       `json:"grouping"          msgpack:"grouping"`
 	Builder  *BuilderInfo `json:"builder,omitempty" msgpack:"builder,omitempty"`
@@ -105,14 +111,16 @@ type OrderAction struct {
 
 // ModifyAction represents a single order modification
 type ModifyAction struct {
-	Type  string    `json:"type"  msgpack:"type"`
-	Oid   any       `json:"oid"   msgpack:"oid"`
-	Order OrderWire `json:"order" msgpack:"order"`
+	Type  string    `json:"type,omitempty"  msgpack:"type,omitempty"`
+	Dex   string    `json:"dex,omitempty"   msgpack:"dex,omitempty"`
+	Oid   any       `json:"oid"             msgpack:"oid"`
+	Order OrderWire `json:"order"           msgpack:"order"`
 }
 
 // BatchModifyAction represents multiple order modifications
 type BatchModifyAction struct {
 	Type     string         `json:"type"     msgpack:"type"`
+	Dex      string         `json:"dex,omitempty" msgpack:"dex,omitempty"`
 	Modifies []ModifyAction `json:"modifies" msgpack:"modifies"`
 }
 
