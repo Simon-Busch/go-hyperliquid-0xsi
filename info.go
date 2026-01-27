@@ -8,6 +8,9 @@ import (
 const (
 	// spotAssetIndexOffset is the offset added to spot asset indices
 	spotAssetIndexOffset = 10000
+	// builderPerpAssetBase is the base offset for builder-deployed perp asset ids.
+	// See Asset IDs docs: asset = 100000 + perpDexIndex*10000 + indexInMeta.
+	builderPerpAssetBase = 100000
 )
 
 type Info struct {
@@ -15,6 +18,7 @@ type Info struct {
 	coinToAsset    map[string]int
 	nameToCoin     map[string]string
 	assetToDecimal map[int]int
+	perpDexName    string // For HIP-3 builder-deployed perps (e.g., "flx")
 }
 
 // postTimeRangeRequest makes a POST request with time range parameters
@@ -45,12 +49,16 @@ func (i *Info) postTimeRangeRequest(
 	return resp, nil
 }
 
-func NewInfo(baseURL string, skipWS bool, meta *Meta, spotMeta *SpotMeta) *Info {
+// NewInfo creates a new Info instance.
+// perpDexName is optional - set to empty string for the default perp dex,
+// or provide a builder dex name (e.g., "flx") for HIP-3 builder-deployed perps.
+func NewInfo(baseURL string, skipWS bool, meta *Meta, spotMeta *SpotMeta, perpDexs *MixedArray, perpDexName string) *Info {
 	info := &Info{
 		client:         NewClient(baseURL),
 		coinToAsset:    make(map[string]int),
 		nameToCoin:     make(map[string]string),
 		assetToDecimal: make(map[int]int),
+		perpDexName:    perpDexName,
 	}
 
 	if meta == nil {
@@ -70,10 +78,44 @@ func NewInfo(baseURL string, skipWS bool, meta *Meta, spotMeta *SpotMeta) *Info 
 	}
 
 	// Map perp assets
-	for asset, assetInfo := range meta.Universe {
-		info.coinToAsset[assetInfo.Name] = asset
-		info.nameToCoin[assetInfo.Name] = assetInfo.Name
-		info.assetToDecimal[asset] = assetInfo.SzDecimals
+	if info.perpDexName != "" {
+		// Builder-deployed perp: compute full asset id as documented.
+		if perpDexs == nil {
+			var err error
+			perpDexsNew, err := info.PerpDexs()
+			perpDexs = &perpDexsNew
+			if err != nil {
+				panic(err)
+			}
+		}
+		perpDexIndex := -1
+		for i, mv := range *perpDexs {
+			if mv.Type() != "object" {
+				continue
+			}
+			var pd PerpDex
+			if err := mv.Parse(&pd); err == nil && pd.Name == info.perpDexName {
+				perpDexIndex = i
+				break
+			}
+		}
+		if perpDexIndex < 0 {
+			panic(fmt.Errorf("unknown perp dex %q (not present in /info perpDexs)", info.perpDexName))
+		}
+		base := builderPerpAssetBase + perpDexIndex*10000
+		for idxInMeta, assetInfo := range meta.Universe {
+			assetID := base + idxInMeta
+			info.coinToAsset[assetInfo.Name] = assetID
+			info.nameToCoin[assetInfo.Name] = assetInfo.Name
+			info.assetToDecimal[assetID] = assetInfo.SzDecimals
+		}
+	} else {
+		// Default perp dex: asset id is just index in meta universe.
+		for asset, assetInfo := range meta.Universe {
+			info.coinToAsset[assetInfo.Name] = asset
+			info.nameToCoin[assetInfo.Name] = assetInfo.Name
+			info.assetToDecimal[asset] = assetInfo.SzDecimals
+		}
 	}
 
 	// Map spot assets starting at 10000
@@ -87,20 +129,98 @@ func NewInfo(baseURL string, skipWS bool, meta *Meta, spotMeta *SpotMeta) *Info 
 	return info
 }
 
-func (i *Info) Meta() (*Meta, error) {
-	resp, err := i.client.post("/info", map[string]any{
+// PerpDexName returns the configured builder perp dex name (e.g. "flx"), or empty string for default dex.
+func (i *Info) PerpDexName() string {
+	return i.perpDexName
+}
+
+// Meta retrieves perpetuals metadata
+// If dex is empty string, returns metadata for the first perp dex (default)
+func (i *Info) Meta(dex ...string) (*Meta, error) {
+	payload := map[string]any{
 		"type": "meta",
-	})
+	}
+	if len(dex) > 0 && dex[0] != "" {
+		payload["dex"] = dex[0]
+	}
+
+	resp, err := i.client.post("/info", payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch meta: %w", err)
 	}
 
-	var meta Meta
+	return parseMetaResponse(resp)
+}
+
+func parseMetaResponse(resp []byte) (*Meta, error) {
+	var meta map[string]json.RawMessage
 	if err := json.Unmarshal(resp, &meta); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal meta response: %w", err)
 	}
 
-	return &meta, nil
+	var universe []AssetInfo
+	if err := json.Unmarshal(meta["universe"], &universe); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal universe: %w", err)
+	}
+
+	var collateralToken int
+	if ct, ok := meta["collateralToken"]; ok {
+		if err := json.Unmarshal(ct, &collateralToken); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal collateralToken: %w", err)
+		}
+	}
+
+	var marginTables []MarginTable
+	if mt, ok := meta["marginTables"]; ok {
+		var marginTablesRaw [][]any
+		if err := json.Unmarshal(mt, &marginTablesRaw); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal margin tables: %w", err)
+		}
+
+		marginTables = make([]MarginTable, len(marginTablesRaw))
+		for idx, marginTable := range marginTablesRaw {
+			if len(marginTable) < 2 {
+				continue
+			}
+			id := int(marginTable[0].(float64))
+			tableBytes, err := json.Marshal(marginTable[1])
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal margin table data: %w", err)
+			}
+
+			var marginTableData map[string]any
+			if err := json.Unmarshal(tableBytes, &marginTableData); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal margin table data: %w", err)
+			}
+
+			marginTiersBytes, err := json.Marshal(marginTableData["marginTiers"])
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal margin tiers: %w", err)
+			}
+
+			var marginTiers []MarginTier
+			if err := json.Unmarshal(marginTiersBytes, &marginTiers); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal margin tiers: %w", err)
+			}
+
+			desc := ""
+			if d, ok := marginTableData["description"].(string); ok {
+				desc = d
+			}
+
+			marginTables[idx] = MarginTable{
+				ID:          id,
+				Description: desc,
+				MarginTiers: marginTiers,
+			}
+		}
+	}
+
+	return &Meta{
+		Universe:        universe,
+		MarginTables:    marginTables,
+		CollateralToken: collateralToken,
+	}, nil
 }
 
 func (i *Info) SpotMeta() (*SpotMeta, error) {
@@ -124,11 +244,18 @@ func (i *Info) NameToAsset(name string) int {
 	return i.coinToAsset[coin]
 }
 
-func (i *Info) UserState(address string) (*UserState, error) {
-	resp, err := i.client.post("/info", map[string]any{
+// UserState retrieves user's perpetuals account summary
+// If dex is empty string, returns state for the first perp dex (default)
+func (i *Info) UserState(address string, dex ...string) (*UserState, error) {
+	payload := map[string]any{
 		"type": "clearinghouseState",
 		"user": address,
-	})
+	}
+	if len(dex) > 0 && dex[0] != "" {
+		payload["dex"] = dex[0]
+	}
+
+	resp, err := i.client.post("/info", payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch user state: %w", err)
 	}
@@ -171,11 +298,19 @@ func (i *Info) SpotUserState(address string) (*SpotClearinghouseState, error) {
 	return &result, nil
 }
 
-func (i *Info) OpenOrders(address string) ([]OpenOrder, error) {
-	resp, err := i.client.post("/info", map[string]any{
+// OpenOrders retrieves user's open orders
+// If dex is empty string, returns orders for the first perp dex (default)
+// Note: Spot open orders are only included with the first perp dex
+func (i *Info) OpenOrders(address string, dex ...string) ([]OpenOrder, error) {
+	payload := map[string]any{
 		"type": "openOrders",
 		"user": address,
-	})
+	}
+	if len(dex) > 0 && dex[0] != "" {
+		payload["dex"] = dex[0]
+	}
+
+	resp, err := i.client.post("/info", payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch open orders: %w", err)
 	}
@@ -187,11 +322,19 @@ func (i *Info) OpenOrders(address string) ([]OpenOrder, error) {
 	return result, nil
 }
 
-func (i *Info) FrontendOpenOrders(address string) ([]FrontendOpenOrder, error) {
-	resp, err := i.client.post("/info", map[string]any{
+// FrontendOpenOrders retrieves user's open orders with frontend info
+// If dex is empty string, returns orders for the first perp dex (default)
+// Note: Spot open orders are only included with the first perp dex
+func (i *Info) FrontendOpenOrders(address string, dex ...string) ([]FrontendOpenOrder, error) {
+	payload := map[string]any{
 		"type": "frontendOpenOrders",
 		"user": address,
-	})
+	}
+	if len(dex) > 0 && dex[0] != "" {
+		payload["dex"] = dex[0]
+	}
+
+	resp, err := i.client.post("/info", payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch frontend open orders: %w", err)
 	}
@@ -203,10 +346,18 @@ func (i *Info) FrontendOpenOrders(address string) ([]FrontendOpenOrder, error) {
 	return result, nil
 }
 
-func (i *Info) AllMids() (map[string]string, error) {
-	resp, err := i.client.post("/info", map[string]any{
+// AllMids retrieves mids for all coins
+// If dex is empty string, returns mids for the first perp dex (default)
+// Note: Spot mids are only included with the first perp dex
+func (i *Info) AllMids(dex ...string) (map[string]string, error) {
+	payload := map[string]any{
 		"type": "allMids",
-	})
+	}
+	if len(dex) > 0 && dex[0] != "" {
+		payload["dex"] = dex[0]
+	}
+
+	resp, err := i.client.post("/info", payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch all mids: %w", err)
 	}
@@ -576,7 +727,9 @@ func (i *Info) QueryUserToMultiSigSigners(multiSigUser string) ([]MultiSigSigner
 }
 
 // PerpDexs returns the list of available perpetual dexes
-func (i *Info) PerpDexs() ([]string, error) {
+// Returns an array where each element can be nil (for the default dex) or a PerpDex object
+// The first element is always null (representing the default dex)
+func (i *Info) PerpDexs() (MixedArray, error) {
 	resp, err := i.client.post("/info", map[string]any{
 		"type": "perpDexs",
 	})
@@ -584,7 +737,7 @@ func (i *Info) PerpDexs() ([]string, error) {
 		return nil, fmt.Errorf("failed to fetch perp dexs: %w", err)
 	}
 
-	var result []string
+	var result MixedArray
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal perp dexs: %w", err)
 	}

@@ -12,24 +12,37 @@ type Exchange struct {
 	privateKey   *ecdsa.PrivateKey
 	vault        string
 	accountAddr  string
+	dex          string // For HIP-3 builder-deployed perps
 	info         *Info
 	expiresAfter *int64
 }
 
+// NewExchange creates a new Exchange instance.
+// perpDexs is optional - pass nil for the default perp dex.
+// perpDexName is optional - set to empty string for the default perp dex,
+// or provide a builder dex name (e.g., "flx") for HIP-3 builder-deployed perps.
 func NewExchange(
 	privateKey *ecdsa.PrivateKey,
 	baseURL string,
 	meta *Meta,
 	vaultAddr, accountAddr string,
 	spotMeta *SpotMeta,
+	perpDexs *MixedArray,
+	perpDexName string,
 ) *Exchange {
 	return &Exchange{
 		client:      NewClient(baseURL),
 		privateKey:  privateKey,
 		vault:       vaultAddr,
 		accountAddr: accountAddr,
-		info:        NewInfo(baseURL, true, meta, spotMeta),
+		dex:         perpDexName,
+		info:        NewInfo(baseURL, true, meta, spotMeta, perpDexs, perpDexName),
 	}
+}
+
+// PerpDex returns the configured builder perp dex name (e.g. "flx"), or empty string for default dex.
+func (e *Exchange) PerpDex() string {
+	return e.dex
 }
 
 // executeAction executes an action and unmarshals the response into the given result

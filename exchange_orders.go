@@ -109,6 +109,7 @@ func newCreateOrderActionWithGrouping(
 
 	return OrderAction{
 		Type:     "order",
+		Dex:      e.dex, // Include dex for HIP-3 builder-deployed perps
 		Orders:   orderRequests,
 		Grouping: string(grouping),
 		Builder:  info,
@@ -232,6 +233,7 @@ func newModifyOrderAction(
 
 	return ModifyAction{
 		Type: "modify",
+		Dex:  e.dex, // Include dex for HIP-3 builder-deployed perps
 		Oid:  modifyRequest.Oid,
 		Order: OrderWire{
 			Asset:      e.info.NameToAsset(modifyRequest.Order.Coin),
@@ -255,11 +257,15 @@ func newModifyOrdersAction(
 		if err != nil {
 			return BatchModifyAction{}, fmt.Errorf("failed to create modify request %d: %w", i, err)
 		}
+		// Clear type and dex for inner modifies (they go on the outer BatchModifyAction)
+		modify.Type = ""
+		modify.Dex = ""
 		modifies[i] = modify
 	}
 
 	return BatchModifyAction{
 		Type:     "batchModify",
+		Dex:      e.dex, // Include dex for HIP-3 builder-deployed perps
 		Modifies: modifies,
 	}, nil
 }
