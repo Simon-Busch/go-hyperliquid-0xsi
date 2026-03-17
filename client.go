@@ -6,10 +6,13 @@ package hyperliquid
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"time"
 )
 
 const (
@@ -26,20 +29,53 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// defaultTransport returns an http.Transport tuned for low-latency API calls.
+func defaultTransport() *http.Transport {
+	return &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		DisableCompression:  true, // skip gzip overhead on small payloads
+	}
+}
+
 func NewClient(baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = MainnetAPIURL
 	}
 
 	return &Client{
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Transport: defaultTransport(),
+		},
+	}
+}
+
+// NewClientWithHTTPClient creates a Client with a caller-provided http.Client,
+// allowing full control over transport, timeouts, and connection pooling.
+func NewClientWithHTTPClient(baseURL string, httpClient *http.Client) *Client {
+	if baseURL == "" {
+		baseURL = MainnetAPIURL
+	}
+	if httpClient == nil {
+		httpClient = &http.Client{Transport: defaultTransport()}
+	}
+
+	return &Client{
 		baseURL:    baseURL,
-		httpClient: new(http.Client),
+		httpClient: httpClient,
 	}
 }
 
 func (c *Client) post(path string, payload any) ([]byte, error) {
 	jsonData, err := json.Marshal(payload)
-	fmt.Println(string(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
