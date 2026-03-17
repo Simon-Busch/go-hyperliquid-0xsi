@@ -73,7 +73,6 @@ type WebsocketClient struct {
 
 type pendingRequest struct {
 	responseChan chan WsPostResponseData
-	timeout      *time.Timer
 }
 
 // NewWebsocketClient creates a new WebSocket client for the given base URL.
@@ -131,7 +130,10 @@ func (w *WebsocketClient) Connect(ctx context.Context) error {
 	}
 
 	// Dial new connection
-	dialer := websocket.Dialer{}
+	dialer := websocket.Dialer{
+		ReadBufferSize:  16384,
+		WriteBufferSize: 4096,
+	}
 	dialCtx, dialCancel := context.WithTimeout(ctx, connectTimeout)
 	defer dialCancel()
 
@@ -253,9 +255,6 @@ func (w *WebsocketClient) Close() error {
 		// Clean up pending POST requests
 		w.pendingMu.Lock()
 		for id, pending := range w.pendingRequests {
-			if pending.timeout != nil {
-				pending.timeout.Stop()
-			}
 			close(pending.responseChan)
 			delete(w.pendingRequests, id)
 		}
@@ -299,20 +298,8 @@ func (w *WebsocketClient) PostRequest(
 	w.pendingRequests[id] = pending
 	w.pendingMu.Unlock()
 
-	// Setup timeout
-	timeoutTimer := time.AfterFunc(timeout, func() {
-		w.pendingMu.Lock()
-		if _, ok := w.pendingRequests[id]; ok {
-			delete(w.pendingRequests, id)
-			close(responseChan)
-		}
-		w.pendingMu.Unlock()
-	})
-	pending.timeout = timeoutTimer
-
 	// Cleanup on exit
 	defer func() {
-		timeoutTimer.Stop()
 		w.pendingMu.Lock()
 		delete(w.pendingRequests, id)
 		w.pendingMu.Unlock()
@@ -332,13 +319,19 @@ func (w *WebsocketClient) PostRequest(
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	// Wait for response
-	response, ok := <-responseChan
-	if !ok {
+	// Wait for response with timer (no goroutine spawned)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case response, ok := <-responseChan:
+		if !ok {
+			return nil, fmt.Errorf("request cancelled")
+		}
+		return &response, nil
+	case <-timer.C:
 		return nil, fmt.Errorf("request timeout")
 	}
-
-	return &response, nil
 }
 
 // PostInfoRequest sends an info request over WebSocket.
@@ -404,24 +397,16 @@ func (w *WebsocketClient) readPump(ctx context.Context) {
 	defer w.wg.Done()
 	defer w.handleDisconnect()
 
+	// Grab conn once — if it changes, context will be cancelled and we exit.
+	w.connMu.RLock()
+	conn := w.conn
+	w.connMu.RUnlock()
+	if conn == nil {
+		return
+	}
+
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		w.connMu.RLock()
-		conn := w.conn
-		w.connMu.RUnlock()
-
-		if conn == nil {
-			return
-		}
-
 		// Set read deadline to detect dead connections.
-		// If no message is received within readDeadline, ReadMessage will error out,
-		// triggering reconnection. This prevents hanging on silent connection failures.
 		_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
 
 		_, msg, err := conn.ReadMessage()
@@ -645,6 +630,12 @@ func (w *WebsocketClient) sendPing() error {
 }
 
 func (w *WebsocketClient) writeJSON(v any) error {
+	// Marshal outside the lock so serialization doesn't block other writers
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("json marshal: %w", err)
+	}
+
 	w.writeMu.Lock()
 	defer w.writeMu.Unlock()
 
@@ -660,7 +651,8 @@ func (w *WebsocketClient) writeJSON(v any) error {
 		return fmt.Errorf("connection closed")
 	}
 
-	return conn.WriteJSON(v)
+	// WriteMessage is a single frame write — no NextWriter/Close dance
+	return conn.WriteMessage(websocket.TextMessage, data)
 }
 
 // Convenience subscription methods
@@ -786,6 +778,12 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 		return true
 	}
 
+	// orderUpdates data is a JSON array, not an object — matching is purely by channel.
+	// User is implicit from the subscription, not present in message data.
+	if key.typ == "orderUpdates" {
+		return true
+	}
+
 	// Single unmarshal for both coin and user matching
 	var msgData struct {
 		Coin string `json:"coin"`
@@ -800,8 +798,8 @@ func matchSubscription(key subKey, msg WSMessage) bool {
 		return false
 	}
 
-	// User matching (orderUpdates doesn't include user in data - user is implicit from subscription)
-	if key.user != "" && key.typ != "orderUpdates" {
+	// User matching
+	if key.user != "" {
 		if !strings.EqualFold(msgData.User, key.user) {
 			return false
 		}
