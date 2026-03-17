@@ -24,7 +24,6 @@ type APIResponse[T any] struct {
 }
 
 func (r *APIResponse[T]) UnmarshalJSON(data []byte) error {
-	fmt.Printf("Unmarshalling API response: %s\n", string(data))
 	// Get parser from pool
 	parser := parserPool.Get().(*fastjson.Parser)
 	defer parserPool.Put(parser)
