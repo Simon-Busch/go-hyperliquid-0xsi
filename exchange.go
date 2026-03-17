@@ -115,3 +115,9 @@ func (e *Exchange) GetAccountAddr() string {
 func (e *Exchange) GetInfo() *Info {
 	return e.info
 }
+
+// WarmUp pre-establishes the HTTP/2 connection so the first order doesn't pay
+// the cold-start penalty (TCP + TLS + ALPN). Call once after creating the Exchange.
+func (e *Exchange) WarmUp() error {
+	return e.client.WarmUp()
+}
