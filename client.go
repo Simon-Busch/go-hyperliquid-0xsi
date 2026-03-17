@@ -112,3 +112,11 @@ func (c *Client) post(path string, payload any) ([]byte, error) {
 
 	return body, nil
 }
+
+// WarmUp sends a lightweight request to establish and warm the HTTP/2 connection
+// (TCP + TLS handshake + ALPN negotiation). Call this once at startup so the first
+// real order doesn't pay the cold-connection penalty.
+func (c *Client) WarmUp() error {
+	_, err := c.post("/info", map[string]any{"type": "meta"})
+	return err
+}
