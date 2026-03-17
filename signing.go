@@ -66,9 +66,7 @@ func actionHash(action any, vaultAddress string, nonce int64, expiresAfter *int6
 	}
 
 	// Return keccak256 hash
-	hash := crypto.Keccak256(data)
-	fmt.Printf("go action hash: %s\n", hex.EncodeToString(hash))
-	return hash
+	return crypto.Keccak256(data)
 }
 
 // constructPhantomAgent implements the same logic as Python's construct_phantom_agent
