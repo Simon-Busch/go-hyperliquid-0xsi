@@ -6,7 +6,6 @@ package hyperliquid
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,11 +35,11 @@ func defaultTransport() *http.Transport {
 			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		ForceAttemptHTTP2:   true, // required when custom DialContext/TLSClientConfig is set
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: 5 * time.Second,
-		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 		DisableCompression:  true, // skip gzip overhead on small payloads
 	}
 }
