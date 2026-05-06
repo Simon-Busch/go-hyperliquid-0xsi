@@ -129,6 +129,32 @@ func NewInfo(baseURL string, skipWS bool, meta *Meta, spotMeta *SpotMeta, perpDe
 		info.assetToDecimal[asset] = spotMeta.Tokens[spotInfo.Tokens[0]].SzDecimals
 	}
 
+	// Map HIP-4 outcome assets starting at 100_000_000.
+	// Failure here is non-fatal: outcomeMeta may be empty or missing on
+	// some environments, and the SDK should still work for perp/spot users.
+	if outcomeMeta, err := info.OutcomeMeta(); err == nil {
+		for _, oc := range outcomeMeta.Outcomes {
+			for sideIdx, spec := range oc.SideSpecs {
+				enc := 10*oc.Outcome + sideIdx
+				asset := outcomeAssetBase + enc
+				// Canonical name is "#<enc>" — empirically verified as the
+				// form the exchange echoes in l2Book/allMids responses.
+				// "+<enc>" form does NOT work for L2 queries despite being
+				// mentioned in the docs, so we don't register it.
+				canonical := fmt.Sprintf("#%d", enc)
+				friendly := fmt.Sprintf("%s:%s", oc.Name, spec.Name)
+				info.coinToAsset[canonical] = asset
+				info.coinToAsset[friendly] = asset
+				info.nameToCoin[canonical] = canonical
+				info.nameToCoin[friendly] = canonical
+				// szDecimals=1 inferred from observed mainnet wire format
+				// (sizes always carry one decimal). outcomeMeta does not
+				// expose szDecimals; revisit if exchange responses change.
+				info.assetToDecimal[asset] = 1
+			}
+		}
+	}
+
 	return info
 }
 
@@ -240,6 +266,25 @@ func (i *Info) SpotMeta() (*SpotMeta, error) {
 	}
 
 	return &spotMeta, nil
+}
+
+// OutcomeMeta retrieves metadata for HIP-4 binary outcome (prediction) markets.
+// Returns the list of active outcomes, each with its sides (YES/NO).
+// May return an empty slice if no markets are live on the target environment.
+func (i *Info) OutcomeMeta() (*OutcomeMeta, error) {
+	resp, err := i.client.post("/info", map[string]any{
+		"type": "outcomeMeta",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch outcome meta: %w", err)
+	}
+
+	var outcomeMeta OutcomeMeta
+	if err := json.Unmarshal(resp, &outcomeMeta); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal outcome meta response: %w", err)
+	}
+
+	return &outcomeMeta, nil
 }
 
 func (i *Info) NameToAsset(name string) int {
