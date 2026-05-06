@@ -19,6 +19,19 @@ func init() {
 	}
 }
 
+// accountAddress returns the user's HL account address from the
+// HL_ACCOUNT_ADDRESS env var (loaded from .env via the package init()).
+// Fails the test if the variable is empty so tests don't silently target
+// some other address.
+func accountAddress(t *testing.T) string {
+	t.Helper()
+	addr := os.Getenv("HL_ACCOUNT_ADDRESS")
+	if addr == "" {
+		t.Fatal("HL_ACCOUNT_ADDRESS not set in environment (.env)")
+	}
+	return addr
+}
+
 func newTestExchange(t *testing.T) *hyperliquid.Exchange {
 	t.Helper()
 
@@ -41,13 +54,15 @@ func newTestExchange(t *testing.T) *hyperliquid.Exchange {
 	t.Logf("Agent (signer) address: %s", agentAddress)
 	t.Logf("Account address: %s", accountAddr)
 
-	// Initialize test exchange
+	// Initialize test exchange (default perp dex)
 	return hyperliquid.NewExchange(
 		testPrivateKey,
-		hyperliquid.TestnetAPIURL,
+		hyperliquid.MainnetAPIURL,
 		nil,
 		"",
 		accountAddr,
 		nil,
+		nil, // perpDexs
+		"",  // perpDexName (empty = default dex)
 	)
 }
