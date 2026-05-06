@@ -83,13 +83,13 @@ func (e *Exchange) SlippagePrice(
 	// Get asset info for proper price formatting
 	asset := e.info.NameToAsset(name)
 	szDecimals := e.info.assetToDecimal[asset]
-	isSpot := asset >= 10000
+	class := ClassifyAsset(asset)
 
 	// Apply proper price formatting according to Hyperliquid docs:
 	// - Up to 5 significant figures
 	// - No more than MAX_DECIMALS - szDecimals decimal places
-	// - MAX_DECIMALS is 6 for perps, 8 for spot
-	price = formatPriceToTickSize(price, szDecimals, isSpot)
+	// - MAX_DECIMALS is 6 for perps, 8 for spot, 3 for HIP-4 outcome markets
+	price = formatPriceToTickSize(price, szDecimals, class)
 
 	// Validate and adjust price to meet tick size requirements
 	adjustedPrice, err := validateAndAdjustPrice(price, asset)
@@ -102,13 +102,8 @@ func (e *Exchange) SlippagePrice(
 
 // formatPriceToTickSize formats price according to Hyperliquid tick size rules
 // Based on: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
-func formatPriceToTickSize(price float64, szDecimals int, isSpot bool) float64 {
-	maxDecimals := 6 // perps
-	if isSpot {
-		maxDecimals = 8 // spot
-	}
-
-	maxPriceDecimals := maxDecimals - szDecimals
+func formatPriceToTickSize(price float64, szDecimals int, class AssetClass) float64 {
+	maxPriceDecimals := class.MaxPriceDecimals() - szDecimals
 
 	// Round to the appropriate number of decimal places
 	multiplier := math.Pow(10, float64(maxPriceDecimals))
@@ -1488,14 +1483,8 @@ func (e *Exchange) getAssetTickSizeFromMetadata(assetID int) float64 {
 		return e.getAssetTickSizeFallback(assetID)
 	}
 
-	// Determine MAX_DECIMALS based on asset type
-	maxDecimals := 6 // perps
-	if assetID >= 10000 {
-		maxDecimals = 8 // spot
-	}
-
 	// Calculate maxPriceDecimals according to Hyperliquid docs
-	maxPriceDecimals := maxDecimals - szDecimals
+	maxPriceDecimals := ClassifyAsset(assetID).MaxPriceDecimals() - szDecimals
 	if maxPriceDecimals < 0 {
 		maxPriceDecimals = 0 // Ensure non-negative
 	}

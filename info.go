@@ -11,6 +11,9 @@ const (
 	// builderPerpAssetBase is the base offset for builder-deployed perp asset ids.
 	// See Asset IDs docs: asset = 100000 + perpDexIndex*10000 + indexInMeta.
 	builderPerpAssetBase = 100000
+	// outcomeAssetBase is the base offset for HIP-4 outcome (binary prediction)
+	// market asset ids. See Asset IDs docs: asset = 100_000_000 + (10*outcome + side).
+	outcomeAssetBase = 100000000
 )
 
 type Info struct {

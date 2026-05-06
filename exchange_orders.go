@@ -69,9 +69,9 @@ func newCreateOrderActionWithGrouping(
 	orderRequests := make([]OrderWire, len(orders))
 	for i, order := range orders {
 		asset := e.info.NameToAsset(order.Coin)
-		isSpot := asset >= 10000
+		class := ClassifyAsset(asset)
 
-		priceWire, err := PriceToWire(order.Price, asset, e.info, isSpot)
+		priceWire, err := PriceToWire(order.Price, asset, e.info, class)
 		if err != nil {
 			return OrderAction{}, fmt.Errorf("failed to wire price for order %d: %w", i, err)
 		}
@@ -85,7 +85,7 @@ func newCreateOrderActionWithGrouping(
 		if order.OrderType.Limit != nil {
 			orderTypeWire.Limit = &LimitOrderTypeWire{Tif: order.OrderType.Limit.Tif}
 		} else if order.OrderType.Trigger != nil {
-			triggerPxWire, err := PriceToWire(order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot)
+			triggerPxWire, err := PriceToWire(order.OrderType.Trigger.TriggerPx, asset, e.info, class)
 			if err != nil {
 				return OrderAction{}, fmt.Errorf("failed to wire trigger price for order %d: %w", i, err)
 			}
@@ -153,12 +153,27 @@ func (e *Exchange) Order(
 	}
 }
 
+// refuseOutcomeBuilderCombo rejects builder-fee orders that target HIP-4 outcome
+// assets. The Python bridge does not yet encode 9-digit outcome asset IDs.
+func (e *Exchange) refuseOutcomeBuilderCombo(orders []CreateOrderRequest) error {
+	for _, o := range orders {
+		if ClassifyAsset(e.info.NameToAsset(o.Coin)) == AssetClassOutcome {
+			return fmt.Errorf("builder-fee orders are not supported for HIP-4 outcome assets (coin %q): "+
+				"Python bridge does not encode outcome asset IDs (>= 100_000_000)", o.Coin)
+		}
+	}
+	return nil
+}
+
 func (e *Exchange) BulkOrders(
 	orders []CreateOrderRequest,
 	builder *BuilderInfo,
 ) (result *APIResponse[OrderResponse], err error) {
 	// Use Python bridge when builder is specified for 100% signature compatibility
 	if builder != nil {
+		if err := e.refuseOutcomeBuilderCombo(orders); err != nil {
+			return nil, err
+		}
 		fmt.Printf("🐍 Using Python bridge for BulkOrders with builder\n")
 		return e.pythonBulkOrders(orders, builder)
 	}
@@ -180,6 +195,9 @@ func (e *Exchange) BulkOrdersWithGrouping(
 ) (result *APIResponse[OrderResponse], err error) {
 	// Use Python bridge when builder is specified for 100% signature compatibility
 	if builder != nil {
+		if err := e.refuseOutcomeBuilderCombo(orders); err != nil {
+			return nil, err
+		}
 		fmt.Printf("🐍 Using Python bridge for BulkOrdersWithGrouping with builder\n")
 		return e.pythonBulkOrdersWithGrouping(orders, grouping, builder)
 	}
@@ -203,9 +221,9 @@ func newModifyOrderAction(
 	modifyRequest ModifyOrderRequest,
 ) (ModifyAction, error) {
 	asset := e.info.NameToAsset(modifyRequest.Order.Coin)
-	isSpot := asset >= 10000
+	class := ClassifyAsset(asset)
 
-	priceWire, err := PriceToWire(modifyRequest.Order.Price, asset, e.info, isSpot)
+	priceWire, err := PriceToWire(modifyRequest.Order.Price, asset, e.info, class)
 	if err != nil {
 		return ModifyAction{}, fmt.Errorf("failed to wire price: %w", err)
 	}
@@ -220,7 +238,7 @@ func newModifyOrderAction(
 	if modifyRequest.Order.OrderType.Limit != nil {
 		orderTypeWire.Limit = &LimitOrderTypeWire{Tif: modifyRequest.Order.OrderType.Limit.Tif}
 	} else if modifyRequest.Order.OrderType.Trigger != nil {
-		triggerPxWire, err := PriceToWire(modifyRequest.Order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot)
+		triggerPxWire, err := PriceToWire(modifyRequest.Order.OrderType.Trigger.TriggerPx, asset, e.info, class)
 		if err != nil {
 			return ModifyAction{}, fmt.Errorf("failed to wire trigger price: %w", err)
 		}
@@ -768,18 +786,14 @@ func (e *Exchange) pythonBulkOrdersWithGrouping(
 // https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
 func (e *Exchange) normalizeOrderForBridge(order CreateOrderRequest) (CreateOrderRequest, error) {
 	asset := e.info.NameToAsset(order.Coin)
-	isSpot := asset >= 10000
+	class := ClassifyAsset(asset)
 
 	// Determine step sizes
 	szDecimals, ok := e.info.assetToDecimal[asset]
 	if !ok {
 		szDecimals = 3 // conservative default
 	}
-	maxDecimals := 6
-	if isSpot {
-		maxDecimals = 8
-	}
-	allowedDecimals := maxDecimals - szDecimals
+	allowedDecimals := class.MaxPriceDecimals() - szDecimals
 	if allowedDecimals < 0 {
 		allowedDecimals = 0
 	}
@@ -792,7 +806,7 @@ func (e *Exchange) normalizeOrderForBridge(order CreateOrderRequest) (CreateOrde
 		return CreateOrderRequest{}, fmt.Errorf("failed to round price to 5 sig figs: %w", err)
 	}
 	priceTicked := math.Round(price5sf/priceStep) * priceStep
-	priceWire, err := PriceToWire(priceTicked, asset, e.info, isSpot)
+	priceWire, err := PriceToWire(priceTicked, asset, e.info, class)
 	if err != nil {
 		return CreateOrderRequest{}, err
 	}
@@ -823,7 +837,7 @@ func (e *Exchange) normalizeOrderForBridge(order CreateOrderRequest) (CreateOrde
 			return CreateOrderRequest{}, fmt.Errorf("failed to round triggerPx to 5 sig figs: %w", err)
 		}
 		trigTicked := math.Round(trig5sf/priceStep) * priceStep
-		trigWire, err := PriceToWire(trigTicked, asset, e.info, isSpot)
+		trigWire, err := PriceToWire(trigTicked, asset, e.info, class)
 		if err != nil {
 			return CreateOrderRequest{}, fmt.Errorf("invalid triggerPx: %w", err)
 		}
@@ -855,9 +869,9 @@ func (e *Exchange) normalizeOrderForBridge(order CreateOrderRequest) (CreateOrde
 // https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
 func (e *Exchange) validateOrderForBridge(order CreateOrderRequest) error {
 	asset := e.info.NameToAsset(order.Coin)
-	isSpot := asset >= 10000
+	class := ClassifyAsset(asset)
 
-	if _, err := PriceToWire(order.Price, asset, e.info, isSpot); err != nil {
+	if _, err := PriceToWire(order.Price, asset, e.info, class); err != nil {
 		return fmt.Errorf("price invalid: %w", err)
 	}
 	if _, err := sizeToWireWithAsset(order.Size, asset, e.info); err != nil {
@@ -865,7 +879,7 @@ func (e *Exchange) validateOrderForBridge(order CreateOrderRequest) error {
 	}
 
 	if order.OrderType.Trigger != nil {
-		if _, err := PriceToWire(order.OrderType.Trigger.TriggerPx, asset, e.info, isSpot); err != nil {
+		if _, err := PriceToWire(order.OrderType.Trigger.TriggerPx, asset, e.info, class); err != nil {
 			return fmt.Errorf("triggerPx invalid: %w", err)
 		}
 		if order.OrderType.Trigger.Tpsl != "tp" && order.OrderType.Trigger.Tpsl != "sl" {

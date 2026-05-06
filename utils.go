@@ -82,8 +82,9 @@ func sizeToWireWithAsset(x float64, asset int, info *Info) (string, error) {
 // following Hyperliquid's price constraints:
 // - Up to 5 significant figures
 // - No more than MAX_DECIMALS - szDecimals decimal places
-// - MAX_DECIMALS is 6 for perps, 8 for spot
-func PriceToWire(x float64, asset int, info *Info, isSpot bool) (string, error) {
+// - MAX_DECIMALS is 6 for perps (incl. HIP-3 builder perps), 8 for spot,
+//   3 for HIP-4 outcome markets
+func PriceToWire(x float64, asset int, info *Info, class AssetClass) (string, error) {
 	// Get the asset-specific decimal constraints
 	szDecimals, exists := info.assetToDecimal[asset]
 	if !exists {
@@ -91,14 +92,8 @@ func PriceToWire(x float64, asset int, info *Info, isSpot bool) (string, error) 
 		return floatToWire(x)
 	}
 
-	// Determine MAX_DECIMALS based on asset type
-	maxDecimals := 6 // perps
-	if isSpot {
-		maxDecimals = 8
-	}
-
 	// Calculate allowed decimal places: MAX_DECIMALS - szDecimals
-	allowedDecimals := maxDecimals - szDecimals
+	allowedDecimals := class.MaxPriceDecimals() - szDecimals
 	if allowedDecimals < 0 {
 		allowedDecimals = 0
 	}
