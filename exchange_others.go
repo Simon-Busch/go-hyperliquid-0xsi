@@ -8,7 +8,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -100,58 +99,26 @@ func (e *Exchange) SlippagePrice(
 	return adjustedPrice, nil
 }
 
-// formatPriceToTickSize formats price according to Hyperliquid tick size rules
-// Based on: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
+// formatPriceToTickSize formats price according to Hyperliquid tick size rules.
+// Two constraints apply, in order:
+//  1. Up to 5 significant figures
+//  2. No more than (MAX_DECIMALS - szDecimals) decimal places
+//
+// See: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
 func formatPriceToTickSize(price float64, szDecimals int, class AssetClass) float64 {
+	// Constraint 1: enforce 5 significant figures first.
+	sigFigsRounded, err := roundToSignificantFigures(price, 5)
+	if err != nil {
+		return price
+	}
+
+	// Constraint 2: round to allowed decimal places.
 	maxPriceDecimals := class.MaxPriceDecimals() - szDecimals
-
-	// Round to the appropriate number of decimal places
+	if maxPriceDecimals < 0 {
+		maxPriceDecimals = 0
+	}
 	multiplier := math.Pow(10, float64(maxPriceDecimals))
-	rounded := math.Round(price*multiplier) / multiplier
-
-	// Convert to string to check significant figures
-	priceStr := fmt.Sprintf("%.10f", rounded)
-	priceStr = strings.TrimRight(priceStr, "0")
-	priceStr = strings.TrimRight(priceStr, ".")
-
-	// Parse back to float
-	result, _ := strconv.ParseFloat(priceStr, 64)
-
-	// Ensure we don't exceed 5 significant figures
-	// Convert to string and count significant figures
-	sigFigs := countSignificantFigures(result)
-	if sigFigs > 5 {
-		// Round to 5 significant figures
-		scale := math.Pow(10, float64(sigFigs-5))
-		result = math.Round(result/scale) * scale
-	}
-
-	return result
-}
-
-// countSignificantFigures counts the number of significant figures in a number
-func countSignificantFigures(num float64) int {
-	if num == 0 {
-		return 1
-	}
-
-	// Convert to string without scientific notation
-	str := fmt.Sprintf("%.10f", num)
-	str = strings.TrimRight(str, "0")
-	str = strings.TrimRight(str, ".")
-
-	// Remove decimal point for counting
-	str = strings.ReplaceAll(str, ".", "")
-
-	// Count non-zero digits
-	count := 0
-	for _, char := range str {
-		if char != '0' {
-			count++
-		}
-	}
-
-	return count
+	return math.Round(sigFigsRounded*multiplier) / multiplier
 }
 
 // roundToTickSize rounds a price to the nearest tick size
