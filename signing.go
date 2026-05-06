@@ -17,6 +17,48 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
+// Cached EIP-712 domain separator — identical for every Hyperliquid signature.
+// Computed once to avoid repeated ABI encoding + Keccak256 on every sign.
+var cachedDomainSeparator []byte
+
+// Shared EIP-712 types (never changes)
+var eip712Types = apitypes.Types{
+	"Agent": []apitypes.Type{
+		{Name: "source", Type: "string"},
+		{Name: "connectionId", Type: "bytes32"},
+	},
+	"EIP712Domain": []apitypes.Type{
+		{Name: "name", Type: "string"},
+		{Name: "version", Type: "string"},
+		{Name: "chainId", Type: "uint256"},
+		{Name: "verifyingContract", Type: "address"},
+	},
+}
+
+var eip712Domain apitypes.TypedDataDomain
+
+func init() {
+	chainId := math.HexOrDecimal256(*big.NewInt(1337))
+	eip712Domain = apitypes.TypedDataDomain{
+		ChainId:           &chainId,
+		Name:              "Exchange",
+		Version:           "1",
+		VerifyingContract: "0x0000000000000000000000000000000000000000",
+	}
+
+	td := apitypes.TypedData{
+		Domain:      eip712Domain,
+		Types:       eip712Types,
+		PrimaryType: "Agent",
+		Message:     map[string]any{"source": "a", "connectionId": "0x" + strings.Repeat("00", 32)},
+	}
+	domainSep, err := td.HashStruct("EIP712Domain", td.Domain.Map())
+	if err != nil {
+		panic(fmt.Sprintf("failed to compute domain separator: %v", err))
+	}
+	cachedDomainSeparator = domainSep
+}
+
 // addressToBytes converts a hex address to bytes, matching Python's address_to_bytes
 func addressToBytes(address string) []byte {
 	address = strings.TrimPrefix(address, "0x")
@@ -83,26 +125,9 @@ func constructPhantomAgent(hash []byte, isMainnet bool) map[string]any {
 
 // l1Payload implements the same logic as Python's l1_payload
 func l1Payload(phantomAgent map[string]any) apitypes.TypedData {
-	chainId := math.HexOrDecimal256(*big.NewInt(1337))
 	return apitypes.TypedData{
-		Domain: apitypes.TypedDataDomain{
-			ChainId:           &chainId,
-			Name:              "Exchange",
-			Version:           "1",
-			VerifyingContract: "0x0000000000000000000000000000000000000000",
-		},
-		Types: apitypes.Types{
-			"Agent": []apitypes.Type{
-				{Name: "source", Type: "string"},
-				{Name: "connectionId", Type: "bytes32"},
-			},
-			"EIP712Domain": []apitypes.Type{
-				{Name: "name", Type: "string"},
-				{Name: "version", Type: "string"},
-				{Name: "chainId", Type: "uint256"},
-				{Name: "verifyingContract", Type: "address"},
-			},
-		},
+		Domain:      eip712Domain,
+		Types:       eip712Types,
 		PrimaryType: "Agent",
 		Message:     phantomAgent,
 	}
@@ -120,21 +145,19 @@ func signInner(
 	privateKey *ecdsa.PrivateKey,
 	typedData apitypes.TypedData,
 ) (SignatureResult, error) {
-	// Create EIP-712 hash
-	domainSeparator, err := typedData.HashStruct("EIP712Domain", typedData.Domain.Map())
-	if err != nil {
-		return SignatureResult{}, fmt.Errorf("failed to hash domain: %w", err)
-	}
-
+	// Message hash (only part that changes per sign)
 	typedDataHash, err := typedData.HashStruct(typedData.PrimaryType, typedData.Message)
 	if err != nil {
 		return SignatureResult{}, fmt.Errorf("failed to hash typed data: %w", err)
 	}
 
-	rawData := []byte{0x19, 0x01}
-	rawData = append(rawData, domainSeparator...)
-	rawData = append(rawData, typedDataHash...)
-	msgHash := crypto.Keccak256Hash(rawData)
+	// EIP-712: 0x19 0x01 || domainSeparator || messageHash
+	var rawData [66]byte // 2 + 32 + 32, stack-allocated
+	rawData[0] = 0x19
+	rawData[1] = 0x01
+	copy(rawData[2:34], cachedDomainSeparator)
+	copy(rawData[34:66], typedDataHash)
+	msgHash := crypto.Keccak256Hash(rawData[:])
 
 	signature, err := crypto.Sign(msgHash.Bytes(), privateKey)
 	if err != nil {
