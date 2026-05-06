@@ -147,10 +147,12 @@ func NewInfo(baseURL string, skipWS bool, meta *Meta, spotMeta *SpotMeta, perpDe
 				info.coinToAsset[friendly] = asset
 				info.nameToCoin[canonical] = canonical
 				info.nameToCoin[friendly] = canonical
-				// szDecimals=1 inferred from observed mainnet wire format
-				// (sizes always carry one decimal). outcomeMeta does not
-				// expose szDecimals; revisit if exchange responses change.
-				info.assetToDecimal[asset] = 1
+				// szDecimals=0: HIP-4 contracts are integer-quantised. The L2
+				// wire format shows sizes like "18.0" but the exchange rejects
+				// fractional sizes ("Order has invalid size"). outcomeMeta
+				// does not expose szDecimals; revisit if exchange behavior
+				// changes.
+				info.assetToDecimal[asset] = 0
 			}
 		}
 	}
