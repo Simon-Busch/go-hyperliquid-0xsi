@@ -34,17 +34,15 @@ func ClassifyAsset(asset int) AssetClass {
 //
 //	allowedPriceDecimals = MaxPriceDecimals() - szDecimals
 //
-// Values: 6 for perps (incl. HIP-3 builder perps), 8 for spot, 3 for HIP-4 outcome
-// markets (binary, prices in [0.001, 0.999]).
+// Values: 8 for spot, 6 for everything else (perps, HIP-3 builder perps,
+// HIP-4 outcome markets). For HIP-4 the value was confirmed empirically:
+// mainnet L2 books for outcomes show prices up to 5 decimals (e.g. 0.66782)
+// with szDecimals=1, i.e. 6 - 1 = 5.
 func (c AssetClass) MaxPriceDecimals() int {
-	switch c {
-	case AssetClassSpot:
+	if c == AssetClassSpot {
 		return 8
-	case AssetClassOutcome:
-		return 3
-	default:
-		return 6
 	}
+	return 6
 }
 
 // IsSpotLike reports whether this asset class uses spot pricing rules.

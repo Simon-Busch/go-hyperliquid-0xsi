@@ -70,6 +70,29 @@ type SpotMeta struct {
 	Tokens   []SpotTokenInfo `json:"tokens"`
 }
 
+// OutcomeSideSpec describes one side (YES or NO) of a binary HIP-4 outcome.
+type OutcomeSideSpec struct {
+	Name string `json:"name"` // "Yes" or "No"
+}
+
+// OutcomeInfo describes a single binary prediction market.
+//
+// The Description field is a pipe-delimited string of key:value pairs,
+// e.g. "class:priceBinary|underlying:BTC|expiry:20260507-0600|targetPrice:81287|period:1d".
+type OutcomeInfo struct {
+	Outcome     int               `json:"outcome"`     // numeric outcome ID
+	Name        string            `json:"name"`        // e.g. "Recurring"
+	Description string            `json:"description"` // structured metadata (see above)
+	SideSpecs   []OutcomeSideSpec `json:"sideSpecs"`   // [YES, NO] in that order
+}
+
+// OutcomeMeta is the response to POST /info {"type":"outcomeMeta"}.
+// Questions is currently always empty on mainnet; reserved for future use.
+type OutcomeMeta struct {
+	Outcomes  []OutcomeInfo `json:"outcomes"`
+	Questions []any         `json:"questions"`
+}
+
 type SpotAssetCtx struct {
 	DayNtlVlm         string  `json:"dayNtlVlm"`
 	MarkPx            string  `json:"markPx"`
