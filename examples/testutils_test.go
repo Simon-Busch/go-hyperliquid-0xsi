@@ -1,7 +1,6 @@
 package examples
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"testing"
@@ -36,7 +35,6 @@ func newTestExchange(t *testing.T) *hyperliquid.Exchange {
 	t.Helper()
 
 	privKeyHex := os.Getenv("HL_PRIVATE_KEY")
-	fmt.Println(privKeyHex)
 	accountAddr := os.Getenv("HL_ACCOUNT_ADDRESS") // main user wallet address
 	// vaultAddr := os.Getenv("HL_VAULT_ADDRESS")
 	testPrivateKey, err := crypto.HexToECDSA(privKeyHex)
